@@ -1,6 +1,6 @@
 # clang-unformat
 
-> A simple tool to infer a .clang-format file from existing code 
+> A simple tool to infer a .clang-format file from existing code
 
 ![](docs/screenshot.png)
 
@@ -39,7 +39,7 @@ clang-unformat:
   --temp arg                   temporary directory to formatted source files
   --clang-format arg           path to the clang-format executable
   --parallel arg               number of threads
-  --require-influence arg      only include parameters that influence the 
+  --require-influence arg      only include parameters that influence the
                                output
   --extensions arg             file extensions to format
 ```

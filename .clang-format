@@ -100,7 +100,7 @@ KeepEmptyLinesAtTheStartOfBlocks: false
 # Alignment
 #    Macros
 AlignConsecutiveMacros: Consecutive
-AttributeMacros: ['FUTURES_CONSTEXPR']
+AttributeMacros: [FUTURES_CONSTEXPR]
 #    Declaration
 PointerAlignment: Left
 ReferenceAlignment: Pointer
@@ -163,17 +163,17 @@ SortIncludes: CaseInsensitive
 SortUsingDeclarations: true
 IncludeBlocks: Merge
 IncludeCategories:
-  - Regex:           '^"[a-z_]+\.hpp"'                          # impl header
-    Priority:        2
-  - Regex:           '^<[a-z_]+\.hpp>'                          # internal
-    Priority:        3
-  - Regex:           '^(["<](boost|small|asio|futures|fmt)/)'  # external
-    Priority:        5
-  - Regex:           '<[[:alnum:].]+>'                         # C++
-    Priority:        6
-  - Regex:           '.*'                                      # any other
-    Priority:        7
+- Regex: ^"[a-z_]+\.hpp"                                        # impl header
+  Priority: 2
+- Regex: ^<[a-z_]+\.hpp>                                        # internal
+  Priority: 3
+- Regex: ^(["<](boost|small|asio|futures|fmt)/)                # external
+  Priority: 5
+- Regex: <[[:alnum:].]+>                                       # C++
+  Priority: 6
+- Regex: .*                                                    # any other
+  Priority: 7
 
 # Comments
 FixNamespaceComments: true
-CommentPragmas:  '^ clang-format'
+CommentPragmas: ^ clang-format

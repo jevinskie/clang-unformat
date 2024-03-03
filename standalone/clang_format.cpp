@@ -609,9 +609,8 @@ generate_clang_format_options() {
                                value.options.end(),
                                [&](const std::string &opt) {
                         return ends_with(opt, def);
-                               })
-                        != value.options.end();
-                    });
+                    }) != value.options.end();
+                });
                 if (it != reasonable_defaults.end()) {
                     value.default_value = *it;
                 }

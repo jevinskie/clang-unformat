@@ -248,19 +248,28 @@ set_clang_format_version(cli_config &config) {
         config.clang_format);
 
     basio::io_context proc_ctx;
-    basio::readable_pipe rp{proc_ctx};
+    basio::readable_pipe rp{ proc_ctx };
     basio::streambuf buffer;
-    process::process c(proc_ctx, config.clang_format.c_str(),
-            {"--version"},
-            process::process_stdio{nullptr, rp, nullptr});
+    process::process
+        c(proc_ctx,
+          config.clang_format.c_str(),
+          { "--version" },
+          process::process_stdio{ nullptr, rp, nullptr });
 
     std::string line;
     bool valid = false;
-    auto read_cb_inner = [&config, &valid, &line, &buffer, &rp](boost::system::error_code ec, std::size_t n, auto &&read_cb_inner) -> void {
+    auto read_cb_inner =
+        [&config,
+         &valid,
+         &line,
+         &buffer,
+         &rp](boost::system::error_code ec, std::size_t n, auto &&read_cb_inner)
+        -> void {
         if (ec) {
             fmt::print(
                 fmt::fg(fmt::terminal_color::red),
-                "boost error in set_clang_format_version! {}\n", ec.message());
+                "boost error in set_clang_format_version! {}\n",
+                ec.message());
             return;
         }
         std::string_view::size_type major_end;
@@ -273,7 +282,7 @@ set_clang_format_version(cli_config &config) {
             return;
         }
         fmt::print(fmt::fg(fmt::terminal_color::green), "{}\n", line);
-                std::string_view line_view(line);
+        std::string_view line_view(line);
         // find line with version
         if (line_view.substr(0, 21) != "clang-format version ")
             goto next_read;
@@ -316,12 +325,20 @@ set_clang_format_version(cli_config &config) {
         valid = true;
         return;
 
-next_read:
-        basio::async_read_until(rp, buffer, '\n', [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
+    next_read:
+        basio::async_read_until(
+            rp,
+            buffer,
+            '\n',
+            [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
             return read_cb_inner(ec, n, read_cb_inner);
         });
     };
-    basio::async_read_until(rp, buffer, '\n', [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
+    basio::async_read_until(
+        rp,
+        buffer,
+        '\n',
+        [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
         return read_cb_inner(ec, n, read_cb_inner);
     });
     c.wait();
@@ -335,7 +352,8 @@ validate_clang_format_executable(cli_config &config) {
         "## Validating clang-format\n");
     if (config.clang_format.empty()) {
         fmt::print("no clang-format path set\n");
-        config.clang_format = process::environment::find_executable("clang-format").c_str();
+        config.clang_format
+            = process::environment::find_executable("clang-format").c_str();
         if (fs::exists(config.clang_format)) {
             set_clang_format_version(config);
         } else {

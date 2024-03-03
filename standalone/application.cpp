@@ -74,19 +74,26 @@ application::format_temp_directory(const fs::path &task_temp) {
             continue;
         }
         basio::io_context proc_ctx;
-        basio::readable_pipe rp{proc_ctx};
+        basio::readable_pipe rp{ proc_ctx };
         basio::streambuf buffer;
-        process::process c(proc_ctx, config_.clang_format.c_str(),
-              {"-i", fs::absolute(p).c_str()},
-              process::process_stdio{nullptr, rp, nullptr});
+        process::process
+            c(proc_ctx,
+              config_.clang_format.c_str(),
+              { "-i", fs::absolute(p).c_str() },
+              process::process_stdio{ nullptr, rp, nullptr });
 
         std::string line;
         bool first_error_line = true;
-        auto read_cb_inner = [&line, &buffer, &first_error_line, &rp](boost::system::error_code ec, std::size_t n, auto &&read_cb_inner) -> void {
+        auto read_cb_inner =
+            [&line, &buffer, &first_error_line, &rp](
+                boost::system::error_code ec,
+                std::size_t n,
+                auto &&read_cb_inner) -> void {
             if (ec) {
                 fmt::print(
                     fmt::fg(fmt::terminal_color::red),
-                    "boost error in format_temp_directory! {}\n", ec.message());
+                    "boost error in format_temp_directory! {}\n",
+                    ec.message());
                 return;
             }
             if (first_error_line) {
@@ -101,11 +108,19 @@ application::format_temp_directory(const fs::path &task_temp) {
                 return;
             }
             fmt::print(fmt::fg(fmt::terminal_color::red), "{}\n", line);
-            basio::async_read_until(rp, buffer, '\n', [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
+            basio::async_read_until(
+                rp,
+                buffer,
+                '\n',
+                [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
                 return read_cb_inner(ec, n, read_cb_inner);
             });
         };
-        basio::async_read_until(rp, buffer, '\n', [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
+        basio::async_read_until(
+            rp,
+            buffer,
+            '\n',
+            [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
             return read_cb_inner(ec, n, read_cb_inner);
         });
         c.wait();
@@ -153,7 +168,7 @@ application::apply_requirements(
             current_cf_.end(),
             [&](clang_format_entry const &entry) {
             return entry.key == p.requirements.first;
-            });
+        });
         if (current_cf_it != current_cf_.end()) {
             req_applied = true;
             prev_entry = *current_cf_it;
@@ -262,7 +277,7 @@ application::evaluate_option_values(
                 // Evaluate
                 std::size_t dist = evaluate(task_temp);
                 return dist;
-                }));
+            }));
         }
 
         // Get and analyse results for parameter
@@ -400,7 +415,7 @@ application::clang_format_local_search() {
         std::size_t(0),
         [](std::size_t x, auto const &p) {
         return x + p.second.options.size();
-        });
+    });
     std::size_t total_neighbors_evaluated = 0;
     futures::thread_pool pool(config_.parallel);
     auto ex = pool.get_executor();
@@ -460,8 +475,8 @@ application::inherit_undetermined_values() {
             }
             auto opts_it = std::
                 find_if(cf_opts_.begin(), cf_opts_.end(), [&](auto &p) {
-                    return p.first == entry.key;
-                });
+                return p.first == entry.key;
+            });
             auto &opts = opts_it->second;
             // Try to inherit from other similar prefixes
             constexpr auto starts_with =
@@ -483,7 +498,7 @@ application::inherit_undetermined_values() {
                             other_entries_count.end(),
                             [&](std::pair<std::string, std::size_t> const &oe) {
                             return oe.first == other_entry.value;
-                            });
+                        });
                         if (it != other_entries_count.end()) {
                             ++it->second;
                         } else {
@@ -540,8 +555,8 @@ application::set_default_values() {
             }
             auto opts_it = std::
                 find_if(cf_opts_.begin(), cf_opts_.end(), [&](auto &p) {
-                    return p.first == entry.key;
-                });
+                return p.first == entry.key;
+            });
             auto &opts = opts_it->second;
             if (!opts.default_value.empty()) {
                 entry.value = opts.default_value;
@@ -571,7 +586,7 @@ application::should_format(const fs::path &p) {
             return file_ext_view == ext
                    || (file_ext_view.front() == '.'
                        && file_ext_view.substr(1) == ext);
-            });
+        });
         return it != config_.extensions.end();
     }
     return false;
