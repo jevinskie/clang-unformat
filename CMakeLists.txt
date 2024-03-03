@@ -22,7 +22,7 @@ set(Boost_FOUND OFF)
 if (NOT Boost_FOUND)
     set(BOOST_VERSION 1.84.0)
     message("Boost library not found or Version < 1.84.0 ; fetch and install Version ${BOOST_VERSION}")
-    set(BOOST_INCLUDE_LIBRARIES asio config process program_options)
+    set(BOOST_INCLUDE_LIBRARIES asio config filesystem process program_options)
     set(BOOST_ENABLE_CMAKE ON)
 
     FetchContent_Declare(
@@ -85,13 +85,15 @@ add_executable(clang-unformat
         standalone/main.cpp)
 target_include_directories(clang-unformat PRIVATE standalone)
 target_compile_features(clang-unformat PRIVATE cxx_std_20)
-target_link_libraries(clang-unformat
-    Boost::program_options
+target_link_libraries(clang-unformat PRIVATE
+    Boost::asio
+    Boost::filesystem
     Boost::process
-    Threads::Threads
+    Boost::program_options
+    edlib::edlib
     fmt::fmt
     futures::futures
-    edlib::edlib
+    Threads::Threads
 )
 install(TARGETS clang-unformat
     RUNTIME DESTINATION bin

@@ -10,6 +10,7 @@
 #include <cli_config.hpp>
 #include <levenshtein.hpp>
 #include <boost/asio.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/process/v2.hpp>
 #include <fmt/chrono.h>
 #include <fmt/color.h>
@@ -24,8 +25,12 @@
 #include <vector>
 #include <string_view>
 
+#undef NDEBUG
+#include <cassert>
+
 namespace fs = std::filesystem;
 namespace basio = boost::asio;
+namespace bfs = boost::filesystem;
 namespace process = boost::process::v2;
 
 application::application(int argc, char **argv)
@@ -64,79 +69,111 @@ pretty_time(std::chrono::steady_clock::duration d) {
     }
 }
 
-bool
-application::format_temp_directory(const fs::path &task_temp) {
-    auto begin = fs::recursive_directory_iterator(task_temp);
-    auto end = fs::recursive_directory_iterator{};
-    for (auto it = begin; it != end; ++it) {
+application::NamedTemporaryFile::NamedTemporaryFile(
+    const std::string &prefix,
+    const std::string &ext) {
+    temp_path = fs::temp_directory_path()
+                / bfs::unique_path(prefix + "-%%%%-%%%%-%%%%-%%%%." + ext)
+                      .c_str();
+    temp_fh = std::fopen(temp_path.c_str(), "w");
+    assert(temp_fh);
+}
+application::NamedTemporaryFile::~NamedTemporaryFile() {
+    assert(!fclose(temp_fh));
+    std::filesystem::remove(temp_path);
+}
+
+const std::filesystem::path &
+application::NamedTemporaryFile::path() const {
+    return temp_path;
+}
+
+std::FILE *
+application::NamedTemporaryFile::fh() const {
+    return temp_fh;
+}
+
+application::NamedTemporaryFile
+application::get_file_list(const fs::path &task_temp) {
+    application::NamedTemporaryFile res{
+        (task_temp / ".").parent_path().filename(),
+        "txt"
+    };
+    const auto cbegin = fs::recursive_directory_iterator(task_temp);
+    const auto cend = fs::recursive_directory_iterator{};
+    for (auto it = cbegin; it != cend; ++it) {
         fs::path p = it->path();
         if (!should_format(p)) {
             continue;
         }
-        bool success = false;
-        basio::io_context proc_ctx;
-        basio::readable_pipe rp{ proc_ctx };
-        basio::streambuf buffer;
-        basio::cancellation_signal sig;
-        process::async_execute(
-            process::process(
-                proc_ctx,
-                config_.clang_format.c_str(),
-                { "-i", fs::absolute(p).c_str() },
-                process::process_stdio{ nullptr, rp, nullptr }),
-            basio::bind_cancellation_slot(
-                sig.slot(),
-                [&](boost::system::error_code ec, int exit_code) {
-            if (ec || exit_code) {
-                fmt::print(
-                    stderr,
-                    "clang-format -i {} got error: {} ret val: {}\n",
-                    fs::absolute(p).c_str(),
-                    ec.message(),
-                    exit_code);
-                success = false;
-            }
-        }));
+        fmt::print(res.fh(), "{}\n", p.c_str());
+    }
+    assert(!std::fflush(res.fh()));
+    return res;
+}
 
-        std::string line;
-        bool first_error_line = true;
-        auto read_cb_inner =
-            [&success, &line, &buffer, &first_error_line, &rp](
-                boost::system::error_code ec,
-                std::size_t n,
-                auto &&read_cb_inner) -> void {
-            if (ec) {
-                if (ec != basio::error::eof) {
-                    fmt::print(
-                        fmt::fg(fmt::terminal_color::red),
-                        "boost error in format_temp_directory! {}\n",
-                        ec.message());
-                } else {
-                    success = false;
-                }
-                return;
-            }
-            if (first_error_line) {
+bool
+application::format_temp_directory(const fs::path &task_temp) {
+    const auto file_list = get_file_list(task_temp);
+    bool success = false;
+    basio::io_context proc_ctx;
+    basio::readable_pipe rp{ proc_ctx };
+    basio::streambuf buffer;
+    basio::cancellation_signal sig;
+    process::async_execute(
+        process::process(
+            proc_ctx,
+            config_.clang_format.c_str(),
+            { "-i", "--files=" + fs::absolute(file_list.path()).string() },
+            process::process_stdio{ nullptr, rp, nullptr }),
+        basio::bind_cancellation_slot(
+            sig.slot(),
+            [&](boost::system::error_code ec, int exit_code) {
+        if (ec || exit_code) {
+            fmt::print(
+                stderr,
+                "clang-format -i --files={} got error: {} ret val: {}\n",
+                fs::absolute(task_temp).c_str(),
+                ec.message(),
+                exit_code);
+            success = false;
+        }
+    }));
+
+    std::string line;
+    bool first_error_line = true;
+    auto read_cb_inner =
+        [&success,
+         &line,
+         &buffer,
+         &first_error_line,
+         &rp](boost::system::error_code ec, std::size_t n, auto &&read_cb_inner)
+        -> void {
+        if (ec) {
+            if (ec != basio::error::eof) {
                 fmt::print(
                     fmt::fg(fmt::terminal_color::red),
-                    "clang-format error!\n");
-                first_error_line = false;
+                    "boost error in format_temp_directory! {}\n",
+                    ec.message());
+                success = !first_error_line;
+            } else {
+                success = false;
             }
-            std::istream is(&buffer);
-            std::getline(is, line);
-            if (line.empty()) {
-                success = true;
-                return;
-            }
-            fmt::print(fmt::fg(fmt::terminal_color::red), "{}\n", line);
-            basio::async_read_until(
-                rp,
-                buffer,
-                '\n',
-                [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
-                return read_cb_inner(ec, n, read_cb_inner);
-            });
-        };
+            return;
+        }
+        if (first_error_line) {
+            fmt::print(
+                fmt::fg(fmt::terminal_color::red),
+                "clang-format error!\n");
+            first_error_line = false;
+        }
+        std::istream is(&buffer);
+        std::getline(is, line);
+        if (line.empty()) {
+            success = true;
+            return;
+        }
+        fmt::print(fmt::fg(fmt::terminal_color::red), "{}\n", line);
         basio::async_read_until(
             rp,
             buffer,
@@ -144,12 +181,16 @@ application::format_temp_directory(const fs::path &task_temp) {
             [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
             return read_cb_inner(ec, n, read_cb_inner);
         });
-        proc_ctx.run();
-        if (!success) {
-            return false;
-        }
-    }
-    return true;
+    };
+    basio::async_read_until(
+        rp,
+        buffer,
+        '\n',
+        [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
+        return read_cb_inner(ec, n, read_cb_inner);
+    });
+    proc_ctx.run();
+    return success;
 }
 
 std::size_t
@@ -598,9 +639,12 @@ application::set_default_values() {
 bool
 application::should_format(const fs::path &p) {
     if (fs::is_regular_file(p) && p.has_extension()) {
-        auto file_ext_str = p.extension().string();
-        std::string_view file_ext_view = file_ext_str.c_str();
-        auto it = std::find_if(
+        const auto file_ext_str = p.extension().string();
+        std::string_view file_ext_view{
+            file_ext_str.c_str(),
+            file_ext_str.size()
+        };
+        const auto it = std::find_if(
             config_.extensions.begin(),
             config_.extensions.end(),
             [file_ext_view](auto ext) {

@@ -11,6 +11,7 @@
 #include <clang_format.hpp>
 #include <cli_config.hpp>
 #include <futures/futures.hpp>
+#include <cstdio>
 #include <filesystem>
 
 class application {
@@ -23,6 +24,22 @@ public:
     run();
 
 private:
+    class NamedTemporaryFile {
+    public:
+        NamedTemporaryFile(const std::string &prefix, const std::string &ext);
+        ~NamedTemporaryFile();
+
+        const std::filesystem::path &
+        path() const;
+
+        std::FILE *
+        fh() const;
+
+    private:
+        std::FILE *temp_fh;
+        std::filesystem::path temp_path;
+    };
+
     // Run local search on clang format parameters
     void
     clang_format_local_search();
@@ -61,6 +78,11 @@ private:
     // Check if we should format the path according to the config options
     bool
     should_format(const std::filesystem::path &p);
+
+    // Get a temp file with the list of files to format
+    NamedTemporaryFile
+    get_file_list(const std::filesystem::path &task_temp);
+
 
     // Format the given temp directory according to the config options
     bool
