@@ -73,27 +73,47 @@ application::format_temp_directory(const fs::path &task_temp) {
         if (!should_format(p)) {
             continue;
         }
+        bool success = false;
         basio::io_context proc_ctx;
         basio::readable_pipe rp{ proc_ctx };
         basio::streambuf buffer;
-        process::process
-            c(proc_ctx,
-              config_.clang_format.c_str(),
-              { "-i", fs::absolute(p).c_str() },
-              process::process_stdio{ nullptr, rp, nullptr });
+        basio::cancellation_signal sig;
+        process::async_execute(
+            process::process(
+                proc_ctx,
+                config_.clang_format.c_str(),
+                { "-i", fs::absolute(p).c_str() },
+                process::process_stdio{ nullptr, rp, nullptr }),
+            basio::bind_cancellation_slot(
+                sig.slot(),
+                [&](boost::system::error_code ec, int exit_code) {
+            if (ec || exit_code) {
+                fmt::print(
+                    stderr,
+                    "clang-format -i {} got error: {} ret val: {}\n",
+                    fs::absolute(p).c_str(),
+                    ec.message(),
+                    exit_code);
+                success = false;
+            }
+        }));
 
         std::string line;
         bool first_error_line = true;
         auto read_cb_inner =
-            [&line, &buffer, &first_error_line, &rp](
+            [&success, &line, &buffer, &first_error_line, &rp](
                 boost::system::error_code ec,
                 std::size_t n,
                 auto &&read_cb_inner) -> void {
             if (ec) {
-                fmt::print(
-                    fmt::fg(fmt::terminal_color::red),
-                    "boost error in format_temp_directory! {}\n",
-                    ec.message());
+                if (ec != basio::error::eof) {
+                    fmt::print(
+                        fmt::fg(fmt::terminal_color::red),
+                        "boost error in format_temp_directory! {}\n",
+                        ec.message());
+                } else {
+                    success = false;
+                }
                 return;
             }
             if (first_error_line) {
@@ -105,6 +125,7 @@ application::format_temp_directory(const fs::path &task_temp) {
             std::istream is(&buffer);
             std::getline(is, line);
             if (line.empty()) {
+                success = true;
                 return;
             }
             fmt::print(fmt::fg(fmt::terminal_color::red), "{}\n", line);
@@ -123,8 +144,8 @@ application::format_temp_directory(const fs::path &task_temp) {
             [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
             return read_cb_inner(ec, n, read_cb_inner);
         });
-        c.wait();
-        if (c.exit_code() != 0) {
+        proc_ctx.run();
+        if (!success) {
             return false;
         }
     }

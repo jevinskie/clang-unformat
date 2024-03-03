@@ -47,7 +47,7 @@ program_description() {
         ("output", po::value<fs::path>()->default_value(empty_path), "output path for the clang-format file")
         ("temp", po::value<fs::path>()->default_value(empty_path), "temporary directory to formatted source files")
         ("clang-format", po::value<fs::path>()->default_value(empty_path), "path to the clang-format executable")
-        ("parallel", po::value<std::size_t>()->default_value(std::min(std::thread::hardware_concurrency(), static_cast<unsigned int>(1))), "number of threads")
+        ("parallel", po::value<std::size_t>()->default_value(std::max(std::thread::hardware_concurrency(), static_cast<unsigned int>(1))), "number of threads")
         ("require-influence", po::value<bool>()->default_value(false), "only include parameters that influence the output")
         ("extensions", po::value<std::vector<std::string>>(), "file extensions to format");
     }
@@ -246,34 +246,58 @@ set_clang_format_version(cli_config &config) {
         fmt::fg(fmt::terminal_color::yellow),
         "default to {}\n",
         config.clang_format);
-
+    bool success = false;
     basio::io_context proc_ctx;
     basio::readable_pipe rp{ proc_ctx };
     basio::streambuf buffer;
-    process::process
-        c(proc_ctx,
-          config.clang_format.c_str(),
-          { "--version" },
-          process::process_stdio{ nullptr, rp, nullptr });
+    basio::cancellation_signal sig;
+    process::async_execute(
+        process::process(
+            proc_ctx,
+            config.clang_format.c_str(),
+            { "--version" },
+            process::process_stdio{ nullptr, rp, nullptr }),
+        basio::bind_cancellation_slot(
+            sig.slot(),
+            [&](boost::system::error_code ec, int exit_code) {
+        if (ec || exit_code) {
+            fmt::print(
+                stderr,
+                "clang-format --version got error: {} ret val: {}\n",
+                ec.message(),
+                exit_code);
+            success = false;
+        }
+        fmt::print(
+            stderr,
+            "clang-format --version got NO error: {} ret val: {}\n",
+            ec.message(),
+            exit_code);
+    }));
 
     std::string line;
-    bool valid = false;
     auto read_cb_inner =
         [&config,
-         &valid,
+         &success,
          &line,
          &buffer,
          &rp](boost::system::error_code ec, std::size_t n, auto &&read_cb_inner)
         -> void {
         if (ec) {
-            fmt::print(
-                fmt::fg(fmt::terminal_color::red),
-                "boost error in set_clang_format_version! {}\n",
-                ec.message());
+            if (ec != basio::error::eof) {
+                fmt::print(
+                    fmt::fg(fmt::terminal_color::red),
+                    "boost error in set_clang_format_version! {}\n",
+                    ec.message());
+            } else {
+                success = false;
+            }
             return;
         }
         std::string_view::size_type major_end;
+        std::string_view needle{ "clang-format version " };
         std::string_view clang_version_view;
+        std::size_t clang_version_off;
         std::size_t major = 0;
         std::from_chars_result res{};
         std::istream is(&buffer);
@@ -284,22 +308,26 @@ set_clang_format_version(cli_config &config) {
         fmt::print(fmt::fg(fmt::terminal_color::green), "{}\n", line);
         std::string_view line_view(line);
         // find line with version
-        if (line_view.substr(0, 21) != "clang-format version ")
+        if (!(clang_version_off = line_view.find(needle)))
             goto next_read;
 
+        line_view = line_view.substr(
+            clang_version_off + needle.size(),
+            line_view.size());
+
         // find version major in the line
-        major_end = line_view.find_first_of('.', 21);
+        major_end = line_view.find_first_of('.');
         if (major_end == std::string_view::npos) {
             fmt::print(
                 fmt::fg(fmt::terminal_color::red),
                 "Cannot find major version in \"{}\"\n",
                 line);
-            valid = false;
+            success = false;
             return;
         }
 
         // convert the major string to major int
-        clang_version_view = line_view.substr(21, major_end - 21);
+        clang_version_view = line_view.substr(0, major_end);
         res = std::from_chars(
             clang_version_view.data(),
             clang_version_view.data() + clang_version_view.size(),
@@ -310,7 +338,7 @@ set_clang_format_version(cli_config &config) {
                 fmt::fg(fmt::terminal_color::red),
                 "Cannot parse major version \"{}\" as integer\n",
                 clang_version_view);
-            valid = false;
+            success = false;
             return;
         }
 
@@ -322,7 +350,7 @@ set_clang_format_version(cli_config &config) {
                 "work properly\n",
                 major);
         }
-        valid = true;
+        success = true;
         return;
 
     next_read:
@@ -341,8 +369,8 @@ set_clang_format_version(cli_config &config) {
         [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
         return read_cb_inner(ec, n, read_cb_inner);
     });
-    c.wait();
-    return !c.exit_code() && valid;
+    proc_ctx.run();
+    return success;
 }
 
 bool
@@ -369,10 +397,12 @@ validate_clang_format_executable(cli_config &config) {
             config.clang_format);
         return false;
     }
+    set_clang_format_version(config);
     fmt::print(
         fmt::fg(fmt::terminal_color::green),
-        "config \"clang_format\" {} OK!\n",
-        config.clang_format);
+        "config \"clang_format\" {} OK! Major version: {}\n",
+        config.clang_format,
+        config.clang_format_version);
     fmt::print("\n");
     return true;
 }
@@ -407,7 +437,7 @@ validate_threads(cli_config &config) {
             "Cannot execute with {} threads\n",
             config.parallel);
         config.parallel = std::
-            min(std::thread::hardware_concurrency(),
+            max(std::thread::hardware_concurrency(),
                 static_cast<unsigned int>(1));
         fmt::print(
             fmt::fg(fmt::terminal_color::yellow),
