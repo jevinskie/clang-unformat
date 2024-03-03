@@ -79,10 +79,19 @@ private:
     bool
     should_format(const std::filesystem::path &p);
 
+    // Get a list of the absolute paths to the original files to format
+    const std::vector<std::filesystem::path> &
+    get_orig_file_list();
+
+    // Get a relative-to-input-directory list of files to format
+    const std::vector<std::filesystem::path> &
+    get_file_list();
+
     // Get a temp file with the list of files to format
     NamedTemporaryFile
-    get_file_list(const std::filesystem::path &task_temp);
-
+    get_file_list_file(
+        const std::filesystem::path &task_temp,
+        const std::vector<std::filesystem::path> &file_list);
 
     // Format the given temp directory according to the config options
     bool

@@ -94,7 +94,9 @@ application::NamedTemporaryFile::fh() const {
 }
 
 application::NamedTemporaryFile
-application::get_file_list(const fs::path &task_temp) {
+application::get_file_list_file(
+    const fs::path &task_temp,
+    const std::vector<fs::path> &file_list) {
     application::NamedTemporaryFile res{
         (task_temp / ".").parent_path().filename(),
         "txt"
@@ -112,9 +114,53 @@ application::get_file_list(const fs::path &task_temp) {
     return res;
 }
 
+const std::vector<fs::path> &
+application::get_orig_file_list() {
+    static std::vector<fs::path> orig_format_files;
+    static bool inited = false;
+    if (!inited) {
+        const auto cbegin = fs::recursive_directory_iterator(config_.input);
+        const auto cend = fs::recursive_directory_iterator{};
+        for (auto it = cbegin; it != cend; ++it) {
+            fs::path p = it->path();
+            if (!should_format(p)) {
+                continue;
+            }
+            orig_format_files.emplace_back(fs::absolute(p));
+        }
+    }
+    return orig_format_files;
+}
+
+const std::vector<fs::path> &
+application::get_file_list() {
+    static std::vector<fs::path> format_files;
+    static bool inited = false;
+    if (!inited) {
+        const auto input_dir = fs::absolute(config_.input);
+        const auto orig_format_files = get_orig_file_list();
+        const auto num_root_parts = std::
+            distance(input_dir.begin(), input_dir.end());
+        for (const auto &p: orig_format_files) {
+            fs::path rel_path{};
+            const auto cbegin = p.begin();
+            const auto cend = p.end();
+            size_t i = 0;
+            for (auto it = cbegin; it != cend; ++it) {
+                if (i >= num_root_parts) {
+                    rel_path /= *it;
+                }
+                ++i;
+            }
+            format_files.emplace_back(rel_path);
+        }
+    }
+    return format_files;
+}
+
 bool
 application::format_temp_directory(const fs::path &task_temp) {
-    const auto file_list = get_file_list(task_temp);
+    const auto file_list = get_file_list_file(task_temp, get_file_list());
     bool success = false;
     basio::io_context proc_ctx;
     basio::readable_pipe rp{ proc_ctx };
@@ -412,7 +458,8 @@ application::evaluate_option_values(
         if (skipped_any) {
             fmt::print(
                 fmt::fg(fmt::terminal_color::yellow),
-                "Skipped option and value pairs not available in clang-format "
+                "Skipped option and value pairs not available in "
+                "clang-format "
                 "{}\n",
                 config_.clang_format_version);
         }
@@ -587,7 +634,8 @@ application::inherit_undetermined_values() {
                             opts.default_value_from_prefix);
                         fmt::print(
                             fmt::fg(fmt::terminal_color::green),
-                            "    Inheriting value {} from prefix {} for {}\n",
+                            "    Inheriting value {} from prefix {} for "
+                            "{}\n",
                             value,
                             opts.default_value_from_prefix,
                             entry.key);
