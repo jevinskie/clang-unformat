@@ -101,14 +101,8 @@ application::get_file_list_file(
         (task_temp / ".").parent_path().filename(),
         "txt"
     };
-    const auto cbegin = fs::recursive_directory_iterator(task_temp);
-    const auto cend = fs::recursive_directory_iterator{};
-    for (auto it = cbegin; it != cend; ++it) {
-        fs::path p = it->path();
-        if (!should_format(p)) {
-            continue;
-        }
-        fmt::print(res.fh(), "{}\n", p.c_str());
+    for (const auto &p: get_file_list()) {
+        fmt::print(res.fh(), "{}\n", (task_temp / p).c_str());
     }
     assert(!std::fflush(res.fh()));
     return res;
