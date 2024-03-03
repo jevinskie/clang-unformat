@@ -6,7 +6,8 @@
 //
 
 #include "cli_config.hpp"
-#include <boost/process.hpp>
+#include <boost/asio.hpp>
+#include <boost/process/v2.hpp>
 #include <boost/program_options.hpp>
 #include <fmt/color.h>
 #include <fmt/format.h>
@@ -24,7 +25,8 @@ struct fmt::formatter<std::filesystem::path> : ostream_formatter {};
 #endif
 
 namespace fs = std::filesystem;
-namespace process = boost::process;
+namespace basio = boost::asio;
+namespace process = boost::process::v2;
 
 void
 print_help(const boost::program_options::options_description &desc) {
@@ -244,32 +246,52 @@ set_clang_format_version(cli_config &config) {
         fmt::fg(fmt::terminal_color::yellow),
         "default to {}\n",
         config.clang_format);
-    process::ipstream is;
-    process::child
-        c(config.clang_format.c_str(), "--version", process::std_out > is);
-    std::string line;
 
-    while (c.running() && std::getline(is, line) && !line.empty()) {
+    basio::io_context proc_ctx;
+    basio::readable_pipe rp{proc_ctx};
+    basio::streambuf buffer;
+    process::process c(proc_ctx, config.clang_format.c_str(),
+            {"--version"},
+            process::process_stdio{nullptr, rp, nullptr});
+
+    std::string line;
+    bool valid = false;
+    auto read_cb_inner = [&config, &valid, &line, &buffer, &rp](boost::system::error_code ec, std::size_t n, auto &&read_cb_inner) -> void {
+        if (ec) {
+            fmt::print(
+                fmt::fg(fmt::terminal_color::red),
+                "boost error in set_clang_format_version! {}\n", ec.message());
+            return;
+        }
+        std::string_view::size_type major_end;
+        std::string_view clang_version_view;
+        std::size_t major = 0;
+        std::from_chars_result res{};
+        std::istream is(&buffer);
+        std::getline(is, line);
+        if (line.empty()) {
+            return;
+        }
         fmt::print(fmt::fg(fmt::terminal_color::green), "{}\n", line);
-        std::string_view line_view(line);
+                std::string_view line_view(line);
         // find line with version
         if (line_view.substr(0, 21) != "clang-format version ")
-            continue;
+            goto next_read;
 
         // find version major in the line
-        std::string_view::size_type major_end = line_view.find_first_of('.', 21);
+        major_end = line_view.find_first_of('.', 21);
         if (major_end == std::string_view::npos) {
             fmt::print(
                 fmt::fg(fmt::terminal_color::red),
                 "Cannot find major version in \"{}\"\n",
                 line);
-            return false;
+            valid = false;
+            return;
         }
 
         // convert the major string to major int
-        auto clang_version_view = line_view.substr(21, major_end - 21);
-        std::size_t major = 0;
-        auto res = std::from_chars(
+        clang_version_view = line_view.substr(21, major_end - 21);
+        res = std::from_chars(
             clang_version_view.data(),
             clang_version_view.data() + clang_version_view.size(),
             major,
@@ -279,7 +301,8 @@ set_clang_format_version(cli_config &config) {
                 fmt::fg(fmt::terminal_color::red),
                 "Cannot parse major version \"{}\" as integer\n",
                 clang_version_view);
-            return false;
+            valid = false;
+            return;
         }
 
         config.clang_format_version = major;
@@ -290,8 +313,19 @@ set_clang_format_version(cli_config &config) {
                 "work properly\n",
                 major);
         }
-    }
-    return true;
+        valid = true;
+        return;
+
+next_read:
+        basio::async_read_until(rp, buffer, '\n', [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
+            return read_cb_inner(ec, n, read_cb_inner);
+        });
+    };
+    basio::async_read_until(rp, buffer, '\n', [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
+        return read_cb_inner(ec, n, read_cb_inner);
+    });
+    c.wait();
+    return !c.exit_code() && valid;
 }
 
 bool
@@ -301,7 +335,7 @@ validate_clang_format_executable(cli_config &config) {
         "## Validating clang-format\n");
     if (config.clang_format.empty()) {
         fmt::print("no clang-format path set\n");
-        config.clang_format = process::search_path("clang-format").c_str();
+        config.clang_format = process::environment::find_executable("clang-format").c_str();
         if (fs::exists(config.clang_format)) {
             set_clang_format_version(config);
         } else {

@@ -10,7 +10,7 @@
 
 #include <clang_format.hpp>
 #include <cli_config.hpp>
-#include <boost/asio/thread_pool.hpp>
+#include <futures/futures.hpp>
 #include <filesystem>
 
 class application {
@@ -44,7 +44,7 @@ private:
     // Run tasks to evaluate a given option
     void
     evaluate_option_values(
-        const boost::asio::thread_pool::executor_type &ex,
+        const futures::thread_pool::executor_type &ex,
         std::size_t &closest_edit_distance,
         std::size_t &total_neighbors_evaluated,
         std::string const &key,

@@ -9,11 +9,12 @@
 #include <clang_format.hpp>
 #include <cli_config.hpp>
 #include <levenshtein.hpp>
-#include <boost/process.hpp>
+#include <boost/asio.hpp>
+#include <boost/process/v2.hpp>
 #include <fmt/chrono.h>
 #include <fmt/color.h>
 #include <fmt/format.h>
-#include <futures/futures.h>
+#include <futures/futures.hpp>
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -24,7 +25,8 @@
 #include <string_view>
 
 namespace fs = std::filesystem;
-namespace process = boost::process;
+namespace basio = boost::asio;
+namespace process = boost::process::v2;
 
 application::application(int argc, char **argv)
     : config_(parse_cli(argc, argv)) {}
@@ -71,24 +73,41 @@ application::format_temp_directory(const fs::path &task_temp) {
         if (!should_format(p)) {
             continue;
         }
-        process::ipstream is;
-        process::child
-            c(config_.clang_format.c_str(),
-              "-i",
-              fs::absolute(p).c_str(),
-              process::std_out > is,
-              process::std_err > process::null);
+        basio::io_context proc_ctx;
+        basio::readable_pipe rp{proc_ctx};
+        basio::streambuf buffer;
+        process::process c(proc_ctx, config_.clang_format.c_str(),
+              {"-i", fs::absolute(p).c_str()},
+              process::process_stdio{nullptr, rp, nullptr});
+
         std::string line;
         bool first_error_line = true;
-        while (c.running() && std::getline(is, line) && !line.empty()) {
+        auto read_cb_inner = [&line, &buffer, &first_error_line, &rp](boost::system::error_code ec, std::size_t n, auto &&read_cb_inner) -> void {
+            if (ec) {
+                fmt::print(
+                    fmt::fg(fmt::terminal_color::red),
+                    "boost error in format_temp_directory! {}\n", ec.message());
+                return;
+            }
             if (first_error_line) {
                 fmt::print(
                     fmt::fg(fmt::terminal_color::red),
                     "clang-format error!\n");
                 first_error_line = false;
             }
+            std::istream is(&buffer);
+            std::getline(is, line);
+            if (line.empty()) {
+                return;
+            }
             fmt::print(fmt::fg(fmt::terminal_color::red), "{}\n", line);
-        }
+            basio::async_read_until(rp, buffer, '\n', [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
+                return read_cb_inner(ec, n, read_cb_inner);
+            });
+        };
+        basio::async_read_until(rp, buffer, '\n', [&read_cb_inner](boost::system::error_code ec, std::size_t n) {
+            return read_cb_inner(ec, n, read_cb_inner);
+        });
         c.wait();
         if (c.exit_code() != 0) {
             return false;
@@ -177,7 +196,7 @@ application::print_time_stats(
 // Launch tasks to evaluate option
 void
 application::evaluate_option_values(
-    const boost::asio::thread_pool::executor_type &ex,
+    const futures::thread_pool::executor_type &ex,
     std::size_t &closest_edit_distance,
     std::size_t &total_neighbors_evaluated,
     std::string const &key,
@@ -383,8 +402,8 @@ application::clang_format_local_search() {
         return x + p.second.options.size();
         });
     std::size_t total_neighbors_evaluated = 0;
-    futures::asio::thread_pool pool(config_.parallel);
-    auto ex = pool.executor();
+    futures::thread_pool pool(config_.parallel);
+    auto ex = pool.get_executor();
 
     for (const auto &[key, possible_values]: cf_opts_) {
         bool req_applied = false;
