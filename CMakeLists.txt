@@ -70,6 +70,9 @@ if (NOT edlib_FOUND)
     FetchContent_MakeAvailable(edlib)
 endif()
 
+# add_compile_options(-glldb)
+# add_compile_options(-O0 -fno-omit-frame-pointer)
+
 #######################################################
 ### Executable                                      ###
 #######################################################
@@ -85,6 +88,7 @@ add_executable(clang-unformat
         standalone/main.cpp)
 target_include_directories(clang-unformat PRIVATE standalone)
 target_compile_features(clang-unformat PRIVATE cxx_std_20)
+# target_compile_options(clang-unformat PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(clang-unformat PRIVATE
     Boost::asio
     Boost::filesystem

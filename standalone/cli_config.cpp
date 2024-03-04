@@ -414,7 +414,9 @@ validate_file_extensions(cli_config &config) {
         "## Validating file extensions\n");
     if (config.extensions.empty()) {
         fmt::print("no file extensions set\n");
-        config.extensions = { "h", "hpp", "cpp", "ipp" };
+        config.extensions = {
+            "h", "hpp", "hxx", "c", "cpp", "cxx", "cc", "ipp", "tcc"
+        };
         fmt::print(
             fmt::fg(fmt::terminal_color::yellow),
             "default to: {}\n",

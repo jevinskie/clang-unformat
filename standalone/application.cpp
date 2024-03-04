@@ -20,8 +20,10 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <mutex>
 #include <numeric>
 #include <optional>
+#include <set>
 #include <vector>
 #include <string_view>
 
@@ -80,7 +82,7 @@ application::NamedTemporaryFile::NamedTemporaryFile(
 }
 application::NamedTemporaryFile::~NamedTemporaryFile() {
     assert(!fclose(temp_fh));
-    std::filesystem::remove(temp_path);
+    // std::filesystem::remove(temp_path);
 }
 
 const std::filesystem::path &
@@ -94,9 +96,7 @@ application::NamedTemporaryFile::fh() const {
 }
 
 application::NamedTemporaryFile
-application::get_file_list_file(
-    const fs::path &task_temp,
-    const std::vector<fs::path> &file_list) {
+application::get_file_list_file(const fs::path &task_temp) {
     application::NamedTemporaryFile res{
         (task_temp / ".").parent_path().filename(),
         "txt"
@@ -111,8 +111,8 @@ application::get_file_list_file(
 const std::vector<fs::path> &
 application::get_orig_file_list() {
     static std::vector<fs::path> orig_format_files;
-    static bool inited = false;
-    if (!inited) {
+    static std::once_flag inited{};
+    std::call_once(inited, [&]() {
         const auto cbegin = fs::recursive_directory_iterator(config_.input);
         const auto cend = fs::recursive_directory_iterator{};
         for (auto it = cbegin; it != cend; ++it) {
@@ -120,42 +120,115 @@ application::get_orig_file_list() {
             if (!should_format(p)) {
                 continue;
             }
-            orig_format_files.emplace_back(fs::absolute(p));
+            orig_format_files.push_back(fs::canonical(p));
         }
-    }
+    });
     return orig_format_files;
 }
 
 const std::vector<fs::path> &
 application::get_file_list() {
     static std::vector<fs::path> format_files;
-    static bool inited = false;
-    if (!inited) {
-        const auto input_dir = fs::absolute(config_.input);
-        const auto orig_format_files = get_orig_file_list();
-        const auto num_root_parts = std::
-            distance(input_dir.begin(), input_dir.end());
-        for (const auto &p: orig_format_files) {
-            fs::path rel_path{};
-            const auto cbegin = p.begin();
-            const auto cend = p.end();
-            size_t i = 0;
-            for (auto it = cbegin; it != cend; ++it) {
-                if (i >= num_root_parts) {
-                    rel_path /= *it;
-                }
-                ++i;
+    static std::once_flag inited{};
+    std::call_once(inited, [&]() {
+        const auto input_dir = fs::canonical(config_.input);
+        for (const auto &p: get_orig_file_list()) {
+            format_files.emplace_back(fs::relative(p, input_dir));
+        }
+    });
+    return format_files;
+}
+
+static bool
+is_subdirectory_canonical(const fs::path &sub_dir, const fs::path &parent_dir) {
+    // Check if the parent directory is a prefix of the subdirectory
+    auto parent_it = parent_dir.begin();
+    auto sub_it = sub_dir.begin();
+    const auto pend = parent_dir.end();
+    const auto send = sub_dir.end();
+    while (parent_it != pend && sub_it != send && *parent_it == *sub_it) {
+        ++parent_it;
+        ++sub_it;
+    }
+
+    // If we've reached the end of the parent directory path, then it is a
+    // prefix of the subdirectory
+    return parent_it == pend;
+}
+
+static bool
+is_parent_directory_canonical(
+    const fs::path &parent_dir,
+    const fs::path &sub_dir) {
+    return is_subdirectory_canonical(sub_dir, parent_dir);
+}
+
+static std::set<fs::path>
+filter_deepest_directories_canonical(const std::set<fs::path> &directories) {
+    std::set<fs::path> deepest_dirs;
+    for (const auto &dir: directories) {
+        bool is_parent = false;
+        for (const auto &other_dir: directories) {
+            if (dir != other_dir
+                && is_parent_directory_canonical(dir, other_dir))
+            {
+                is_parent = true;
+                break;
             }
-            format_files.emplace_back(rel_path);
+        }
+        if (!is_parent) {
+            deepest_dirs.emplace(dir);
         }
     }
-    return format_files;
+    return deepest_dirs;
+}
+
+
+const std::vector<fs::path> &
+application::get_dir_list() {
+    static std::vector<fs::path> format_dirs;
+    static std::once_flag inited{};
+    std::call_once(inited, [&]() {
+        const auto input_dir = fs::canonical(config_.input);
+        std::set<fs::path> format_dirs_set;
+        for (const auto &p: get_orig_file_list()) {
+            const auto abs_parent_dir = p.parent_path();
+            assert(fs::is_directory(abs_parent_dir));
+            const auto rel_parent_dir = fs::relative(abs_parent_dir, input_dir);
+            if (rel_parent_dir.empty()) {
+                continue;
+            }
+            format_dirs_set.emplace(rel_parent_dir);
+        }
+        const auto format_dirs_set_min = filter_deepest_directories_canonical(
+            format_dirs_set);
+        format_dirs = { format_dirs_set_min.cbegin(),
+                        format_dirs_set_min.cend() };
+    });
+    return format_dirs;
+}
+
+void
+application::copy_to_temp_directory(const fs::path &task_temp) {
+    for (const auto &d: get_dir_list()) {
+        fs::create_directories(task_temp / d);
+    }
+    const auto orig_files = get_orig_file_list();
+    const auto rel_files = get_file_list();
+    const auto sz = orig_files.size();
+    assert(sz == rel_files.size());
+    for (size_t i = 0; i < sz; ++i) {
+        fs::copy(
+            orig_files[i],
+            task_temp / rel_files[i],
+            fs::copy_options::overwrite_existing);
+    }
 }
 
 bool
 application::format_temp_directory(const fs::path &task_temp) {
-    const auto file_list = get_file_list_file(task_temp, get_file_list());
-    bool success = false;
+    const auto file_list = get_file_list_file(task_temp);
+    bool success = true;
     basio::io_context proc_ctx;
     basio::readable_pipe rp{ proc_ctx };
     basio::streambuf buffer;
@@ -164,16 +237,16 @@ application::format_temp_directory(const fs::path &task_temp) {
         process::process(
             proc_ctx,
             config_.clang_format.c_str(),
-            { "-i", "--files=" + fs::absolute(file_list.path()).string() },
+            { "-i", "--files=" + fs::canonical(file_list.path()).string() },
             process::process_stdio{ nullptr, rp, nullptr }),
         basio::bind_cancellation_slot(
             sig.slot(),
             [&](boost::system::error_code ec, int exit_code) {
         if (ec || exit_code) {
             fmt::print(
-                stderr,
+                fmt::fg(fmt::terminal_color::red),
                 "clang-format -i --files={} got error: {} ret val: {}\n",
-                fs::absolute(task_temp).c_str(),
+                fs::canonical(task_temp).c_str(),
                 ec.message(),
                 exit_code);
             success = false;
@@ -187,33 +260,32 @@ application::format_temp_directory(const fs::path &task_temp) {
          &line,
          &buffer,
          &first_error_line,
+         &file_list,
+         &task_temp,
          &rp](boost::system::error_code ec, std::size_t n, auto &&read_cb_inner)
         -> void {
+        success &= !n;
         if (ec) {
             if (ec != basio::error::eof) {
                 fmt::print(
                     fmt::fg(fmt::terminal_color::red),
-                    "boost error in format_temp_directory! {}\n",
+                    "Boost error in format_temp_directory! {}\n",
                     ec.message());
-                success = !first_error_line;
-            } else {
                 success = false;
             }
             return;
         }
-        if (first_error_line) {
-            fmt::print(
-                fmt::fg(fmt::terminal_color::red),
-                "clang-format error!\n");
-            first_error_line = false;
-        }
         std::istream is(&buffer);
         std::getline(is, line);
-        if (line.empty()) {
-            success = true;
-            return;
+        if (!line.empty()) {
+            if (first_error_line) {
+                fmt::print(
+                    fmt::fg(fmt::terminal_color::red),
+                    "clang-format error!\n");
+                first_error_line = false;
+            }
+            fmt::print(fmt::fg(fmt::terminal_color::red), "{}\n", line);
         }
-        fmt::print(fmt::fg(fmt::terminal_color::red), "{}\n", line);
         basio::async_read_until(
             rp,
             buffer,
@@ -360,11 +432,7 @@ application::evaluate_option_values(
                  empty_str]() mutable {
                 // Copy experiment files
                 fs::path task_temp = config_.temp / fmt::format("temp_{}", i);
-                fs::copy(
-                    config_.input,
-                    task_temp,
-                    fs::copy_options::recursive
-                        | fs::copy_options::overwrite_existing);
+                copy_to_temp_directory(task_temp);
 
                 // Emplace option in clang format
                 current_cf.emplace_back(clang_format_entry{

@@ -87,11 +87,18 @@ private:
     const std::vector<std::filesystem::path> &
     get_file_list();
 
+    // Get a relative-to-input-directory list of directories containing files to
+    // be formatted
+    const std::vector<std::filesystem::path> &
+    get_dir_list();
+
     // Get a temp file with the list of files to format
     NamedTemporaryFile
-    get_file_list_file(
-        const std::filesystem::path &task_temp,
-        const std::vector<std::filesystem::path> &file_list);
+    get_file_list_file(const std::filesystem::path &task_temp);
+
+    // Copy files to be formatted from the input directory to the temp directory
+    void
+    copy_to_temp_directory(const std::filesystem::path &task_temp);
 
     // Format the given temp directory according to the config options
     bool
