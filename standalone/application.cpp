@@ -82,7 +82,7 @@ application::NamedTemporaryFile::NamedTemporaryFile(
 }
 application::NamedTemporaryFile::~NamedTemporaryFile() {
     assert(!fclose(temp_fh));
-    // std::filesystem::remove(temp_path);
+    std::filesystem::remove(temp_path);
 }
 
 const std::filesystem::path &
