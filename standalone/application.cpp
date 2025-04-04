@@ -404,7 +404,7 @@ application::evaluate_option_values(
             fmt::print(
                 "┬{0:─^{1}}",
                 empty_str,
-                (std::max)(option.size() + 2, min_col_w));
+                std::max(option.size() + 2, min_col_w));
         }
         fmt::print("┐\n");
         fmt::print("│{0: ^{1}}", "Value", first_col_w);
@@ -412,7 +412,7 @@ application::evaluate_option_values(
             fmt::print(
                 "│{0: ^{1}}",
                 option,
-                (std::max)(option.size() + 2, min_col_w));
+                std::max(option.size() + 2, min_col_w));
         }
         fmt::print("│\n");
 
@@ -422,26 +422,28 @@ application::evaluate_option_values(
             const auto &possible_value = *(
                 possible_values.options.begin()
                 + static_cast<std::vector<std::string>::difference_type>(i));
-            evaluation_tasks.emplace_back(futures::async(
-                ex,
-                [this,
-                 i,
-                 current_cf = current_cf_,
-                 possible_value,
-                 key = key,
-                 empty_str]() mutable {
+            evaluation_tasks.emplace_back(
+                futures::async(
+                    ex,
+                    [this,
+                     i,
+                     current_cf = current_cf_,
+                     possible_value,
+                     key = key,
+                     empty_str]() mutable {
                 // Copy experiment files
                 fs::path task_temp = config_.temp / fmt::format("temp_{}", i);
                 copy_to_temp_directory(task_temp);
 
                 // Emplace option in clang format
-                current_cf.emplace_back(clang_format_entry{
-                    key,
-                    possible_value,
-                    true,
-                    0,
-                    false,
-                    empty_str });
+                current_cf.emplace_back(
+                    clang_format_entry{
+                        key,
+                        possible_value,
+                        true,
+                        0,
+                        false,
+                        empty_str });
                 save(current_cf, task_temp / ".clang-format");
 
                 // Evaluate
@@ -462,7 +464,7 @@ application::evaluate_option_values(
 
             // Print some info
             std::size_t dist = evaluation_tasks[i].get();
-            std::size_t col_w = (std::max)(possible_value.size() + 2, min_col_w);
+            std::size_t col_w = std::max(possible_value.size() + 2, min_col_w);
             if (dist == std::size_t(-1)) {
                 fmt::print(
                     fmt::fg(fmt::terminal_color::yellow),
@@ -513,40 +515,41 @@ application::evaluate_option_values(
             fmt::print(
                 "┴{0:─^{1}}",
                 empty_str,
-                (std::max)(option.size() + 2, min_col_w));
+                std::max(option.size() + 2, min_col_w));
         }
         fmt::print("┘\n");
 
         if (skipped_any) {
             fmt::print(
                 fmt::fg(fmt::terminal_color::yellow),
-                "Skipped option and value pairs not available in "
-                "clang-format "
+                "Skipped option and value pairs not available in clang-format "
                 "{}\n",
                 config_.clang_format_version);
         }
 
         // Update the main file
         if (!improvement_value.empty() && value_influenced_output) {
-            current_cf_.emplace_back(clang_format_entry{
-                key,
-                improvement_value,
-                value_influenced_output,
-                closest_edit_distance,
-                closest_edit_distance == std::size_t(-1),
-                empty_str });
-        } else if (!value_influenced_output) {
-            if (!config_.require_influence) {
-                if (improvement_value.empty()) {
-                    improvement_value = possible_values.options.front();
-                }
-                current_cf_.emplace_back(clang_format_entry{
+            current_cf_.emplace_back(
+                clang_format_entry{
                     key,
                     improvement_value,
                     value_influenced_output,
                     closest_edit_distance,
                     closest_edit_distance == std::size_t(-1),
                     empty_str });
+        } else if (!value_influenced_output) {
+            if (!config_.require_influence) {
+                if (improvement_value.empty()) {
+                    improvement_value = possible_values.options.front();
+                }
+                current_cf_.emplace_back(
+                    clang_format_entry{
+                        key,
+                        improvement_value,
+                        value_influenced_output,
+                        closest_edit_distance,
+                        closest_edit_distance == std::size_t(-1),
+                        empty_str });
                 if (closest_edit_distance == std::size_t(-1)) {
                     current_cf_.back().failed = true;
                 }
@@ -562,13 +565,14 @@ application::evaluate_option_values(
             "Single option for {}: {}\n",
             key,
             possible_values.options.front());
-        current_cf_.emplace_back(clang_format_entry{
-            key,
-            possible_values.options.front(),
-            true,
-            0,
-            false,
-            "single option" });
+        current_cf_.emplace_back(
+            clang_format_entry{
+                key,
+                possible_values.options.front(),
+                true,
+                0,
+                false,
+                "single option" });
         ++total_neighbors_evaluated;
     }
     if (!current_cf_.empty()) {
@@ -696,8 +700,7 @@ application::inherit_undetermined_values() {
                             opts.default_value_from_prefix);
                         fmt::print(
                             fmt::fg(fmt::terminal_color::green),
-                            "    Inheriting value {} from prefix {} for "
-                            "{}\n",
+                            "    Inheriting value {} from prefix {} for {}\n",
                             value,
                             opts.default_value_from_prefix,
                             entry.key);

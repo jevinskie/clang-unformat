@@ -111,7 +111,7 @@ ShortNamespaceLines: 0
 #    Brackets
 AlignAfterOpenBracket: AlwaysBreak
 #    Expressions
-AlignArrayOfStructures: Right
+AlignArrayOfStructures: Left
 AlignConsecutiveAssignments: None
 AlignConsecutiveBitFields: None
 AlignEscapedNewlines: Left
