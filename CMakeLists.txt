@@ -1,8 +1,8 @@
 #######################################################
 ### Clang-Unformat                                  ###
 #######################################################
-cmake_minimum_required(VERSION 3.10)
-project(clang_unformat)
+cmake_minimum_required(VERSION 3.31)
+project(clang_unformat CXX)
 
 set(CXX_STANDARD 20)
 set(CMAKE_POLICY_DEFAULT_CMP0063 NEW)
@@ -17,18 +17,18 @@ include(FetchContent)
 find_package(Threads)
 
 # Boost
-# find_package(Boost 1.84.0 COMPONENTS asio config process program_options)
+# find_package(Boost 1.87.0 COMPONENTS asio config process program_options)
 set(Boost_FOUND OFF)
 if (NOT Boost_FOUND)
-    set(BOOST_VERSION 1.84.0)
-    message("Boost library not found or Version < 1.84.0 ; fetch and install Version ${BOOST_VERSION}")
-    set(BOOST_INCLUDE_LIBRARIES asio config filesystem process program_options)
+    set(BOOST_VERSION 1.87.0)
+    message("Boost library not found or Version < 1.87.0 ; fetch and install Version ${BOOST_VERSION}")
+    set(BOOST_INCLUDE_LIBRARIES asio config filesystem optional process program_options)
     set(BOOST_ENABLE_CMAKE ON)
 
     FetchContent_Declare(
         Boost
-        URL https://github.com/boostorg/boost/releases/download/boost-${BOOST_VERSION}/boost-${BOOST_VERSION}.zip
-        URL_HASH SHA256=f46e9a747e0828130d37ead82b796ab82348e3a7ee688cd43b6c5f35f5e71aef
+        URL https://github.com/boostorg/boost/releases/download/boost-${BOOST_VERSION}/boost-${BOOST_VERSION}-cmake.tar.xz
+        URL_HASH SHA256=7da75f171837577a52bbf217e17f8ea576c7c246e4594d617bfde7fafd408be5
         DOWNLOAD_EXTRACT_TIMESTAMP true
         GIT_TAG boost-${BOOST_VERSION}
     )
@@ -43,8 +43,8 @@ if (NOT fmt_FOUND)
     option(FMT_TEST OFF)
     option(FMT_INSTALL OFF)
     FetchContent_Declare(fmt
-        URL https://github.com/fmtlib/fmt/releases/download/10.2.1/fmt-10.2.1.zip
-        URL_HASH SHA256=312151a2d13c8327f5c9c586ac6cf7cddc1658e8f53edae0ec56509c8fa516c9
+        URL https://github.com/fmtlib/fmt/releases/download/11.1.4/fmt-11.1.4.zip
+        URL_HASH SHA256=49b039601196e1a765e81c5c9a05a61ed3d33f23b3961323d7322e4fe213d3e6
         DOWNLOAD_EXTRACT_TIMESTAMP true
     )
     FetchContent_MakeAvailable(fmt)
@@ -52,6 +52,8 @@ endif()
 
 # futures
 option(FUTURES_PREFER_BOOST ON)
+option(FUTURES_USE_FIND_PACKAGE OFF)
+option(FUTURES_USE_FETCH_CONTENT OFF)
 FetchContent_Declare(futures
     URL https://github.com/alandefreitas/futures/archive/refs/tags/v0.1.5.zip
     URL_HASH SHA256=09472daf7a49a9194085dce7e436b06fe1cc435a95aa50e2f8676191d71a9759
