@@ -110,6 +110,25 @@ def indent(text: str, columns: int, indent_first_line: bool = True) -> str:
 
 
 @define(auto_attribs=True, frozen=True)
+class Type:
+    cxx_name: str
+    yaml_name: str
+    is_list: bool
+    is_optional: bool
+    is_deprecated: bool
+
+    @classmethod
+    def from_cxx(cls, cxx_name: str, args: argparse.Namespace) -> Self:
+        return cls(
+            cxx_name,
+            to_yaml_type(cxx_name, args),
+            cxx_name.startswith("std::vector"),
+            cxx_name.startswith("std::optional"),
+            cxx_name == "deprecated",
+        )
+
+
+@define(auto_attribs=True, frozen=True)
 class Version:
     major: int
     minor: int | None
@@ -179,24 +198,29 @@ class Enum:
 @define(auto_attribs=True, frozen=True)
 class NestedEnum:
     name: str
-    type: str
+    type: Type
     comment: str = field(repr=False)
     version: Version | None = field(converter=Version.from_opt_str)
     values: list
     args: argparse.Namespace = field(repr=False)
+    orig_type: str = field(init=False)
+
+    def __attrs_post_init__(self) -> None:
+        object.__setattr__(self, "orig_type", self.type)
+        object.__setattr__(self, "type", Type.from_cxx(self.orig_type, self.args))
 
     def __str__(self) -> str:
         s = ""
         if self.version:
             s = "\n* ``{} {}`` :versionbadge:`clang-format {}`\n\n{}".format(
-                to_yaml_type(self.type, self.args),
+                self.type.yaml_name,
                 self.name,
                 self.version,
                 doxygen2rst(indent(self.comment, 2)),
             )
         else:
             s = "\n* ``{} {}``\n{}".format(
-                to_yaml_type(self.type, self.args),
+                self.type.yaml_name,
                 self.name,
                 doxygen2rst(indent(self.comment, 2)),
             )
@@ -218,15 +242,20 @@ class NestedStruct:
 @define(auto_attribs=True)
 class Option:
     name: str
-    type: str
+    type: Type
     comment: str = field(converter=str.strip, repr=False)
     version: Version | None = field(converter=Version.from_opt_str)
     args: argparse.Namespace = field(repr=False)
     enum: Enum | None = field(init=False, default=None)
     nested_struct: NestedStruct | None = field(init=False, default=None)
+    orig_type: str = field(init=False)
+
+    def __attrs_post_init__(self) -> None:
+        object.__setattr__(self, "orig_type", self.type)
+        object.__setattr__(self, "type", Type.from_cxx(self.orig_type, self.args))
 
     def __str__(self) -> str:
-        s = f".. _{self.name}:\n\n**{self.name}** (``{to_yaml_type(self.type, self.args)}``) "
+        s = f".. _{self.name}:\n\n**{self.name}** (``{self.type.yaml_name}``) "
         if self.version:
             s += f":versionbadge:`clang-format {self.version}` "
         s += f":ref:`¶ <{self.name}>`\n{doxygen2rst(indent(self.comment, 2))}"
@@ -326,13 +355,36 @@ class OptionsReader:
         state = State.BeforeStruct
 
         options: list[Option] = []
-        enums: dict[str, Enum] = {}
-        nested_structs: dict[str, NestedStruct] = {}
+        enums: dict[str | Type, Enum] = {}
+        nested_structs: dict[str | Type, NestedStruct] = {}
         comment: str = ""
         enum: Enum | None = None
         nested_struct: NestedStruct | None = None
         version: str | None = None
         deprecated: bool = False
+
+        BuiltinBool = Type.from_cxx("bool", self.args)
+        BuiltinUnsigned = Type.from_cxx("unsigned", self.args)
+        BuiltinInt = Type.from_cxx("int", self.args)
+        BuiltinString = Type.from_cxx("std::string", self.args)
+        BuiltinStringList = Type.from_cxx("std::vector<std::string>", self.args)
+        BuiltinIncludeCategoryList = Type.from_cxx("std::vector<IncludeCategory>", self.args)
+        BuiltinRawStringFormatList = Type.from_cxx("std::vector<RawStringFormat>", self.args)
+        BuiltinOptionalUnsigned = Type.from_cxx("std::optional<unsigned>", self.args)
+        BuiltinDeprecated = Type.from_cxx("deprecated", self.args)
+
+        builtin_types: list[Type] = [
+            BuiltinBool,
+            BuiltinUnsigned,
+            BuiltinInt,
+            BuiltinString,
+            BuiltinStringList,
+            BuiltinIncludeCategoryList,
+            BuiltinRawStringFormatList,
+            BuiltinOptionalUnsigned,
+            BuiltinDeprecated,
+        ]
+        builtin_types_cxx_names: list[str] = [t.cxx_name for t in builtin_types]
 
         for line in self.header:
             self.lineno += 1
@@ -379,7 +431,7 @@ class OptionsReader:
 
                     if not version:
                         self.__warning(f"missing version for {field_name}", line)
-                    option = Option(str(field_name), str(field_type), comment, version, self.args)
+                    option = Option(field_name, field_type, comment, version, self.args)
                     options.append(option)
                     version = None
                 else:
@@ -490,17 +542,7 @@ class OptionsReader:
             raise Exception("Not finished by the end of file")
 
         for option in options:
-            if option.type not in [
-                "bool",
-                "unsigned",
-                "int",
-                "std::string",
-                "std::vector<std::string>",
-                "std::vector<IncludeCategory>",
-                "std::vector<RawStringFormat>",
-                "std::optional<unsigned>",
-                "deprecated",
-            ]:
+            if option.type.cxx_name not in builtin_types_cxx_names:
                 if option.type in enums:
                     option.enum = enums[option.type]
                 elif option.type in nested_structs:
