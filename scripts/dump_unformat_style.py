@@ -9,26 +9,23 @@ import os
 import re
 import sys
 from io import TextIOWrapper
-from typing import Set
 
 CLANG_DIR = os.path.join(os.path.dirname(__file__), "../..")
 FORMAT_STYLE_FILE = os.path.join(CLANG_DIR, "include/clang/Format/Format.h")
-INCLUDE_STYLE_FILE = os.path.join(
-    CLANG_DIR, "include/clang/Tooling/Inclusions/IncludeStyle.h"
-)
+INCLUDE_STYLE_FILE = os.path.join(CLANG_DIR, "include/clang/Tooling/Inclusions/IncludeStyle.h")
 DOC_FILE = os.path.join(CLANG_DIR, "docs/ClangFormatStyleOptions.rst")
 
 PLURALS_FILE = os.path.join(os.path.dirname(__file__), "plurals.txt")
 
-plurals: Set[str] = set()
+plurals: set[str] = set()
 with open(PLURALS_FILE) as f:
     f.seek(0)
     plurals = set(f.read().splitlines())
 
 
 def substitute(text, tag, contents):
-    replacement = "\n.. START_%s\n\n%s\n\n.. END_%s\n" % (tag, contents, tag)
-    pattern = r"\n\.\. START_%s\n.*\n\.\. END_%s\n" % (tag, tag)
+    replacement = f"\n.. START_{tag}\n\n{contents}\n\n.. END_{tag}\n"
+    pattern = rf"\n\.\. START_{tag}\n.*\n\.\. END_{tag}\n"
     return re.sub(pattern, "%s", text, flags=re.S) % replacement
 
 
@@ -106,7 +103,7 @@ def indent(text, columns, indent_first_line=True):
     return indent_str + s
 
 
-class Option(object):
+class Option:
     def __init__(self, name, opt_type, comment, version):
         self.name = name
         self.type = opt_type
@@ -116,25 +113,23 @@ class Option(object):
         self.version = version
 
     def __str__(self):
-        s = ".. _%s:\n\n**%s** (``%s``) " % (
+        s = ".. _{}:\n\n**{}** (``{}``) ".format(
             self.name,
             self.name,
             to_yaml_type(self.type),
         )
         if self.version:
             s += ":versionbadge:`clang-format %s` " % self.version
-        s += ":ref:`¶ <%s>`\n%s" % (self.name, doxygen2rst(indent(self.comment, 2)))
+        s += f":ref:`¶ <{self.name}>`\n{doxygen2rst(indent(self.comment, 2))}"
         if self.enum and self.enum.values:
             s += indent("\n\nPossible values:\n\n%s\n" % self.enum, 2)
         if self.nested_struct:
-            s += indent(
-                "\n\nNested configuration flags:\n\n%s\n" % self.nested_struct, 2
-            )
+            s += indent("\n\nNested configuration flags:\n\n%s\n" % self.nested_struct, 2)
             s = s.replace("<option-name>", self.name)
         return s
 
 
-class NestedStruct(object):
+class NestedStruct:
     def __init__(self, name, comment):
         self.name = name
         self.comment = comment.strip()
@@ -144,7 +139,7 @@ class NestedStruct(object):
         return self.comment + "\n" + "\n".join(map(str, self.values))
 
 
-class NestedField(object):
+class NestedField:
     def __init__(self, name, comment, version):
         self.name = name
         self.comment = comment.strip()
@@ -152,18 +147,18 @@ class NestedField(object):
 
     def __str__(self):
         if self.version:
-            return "\n* ``%s`` :versionbadge:`clang-format %s`\n%s" % (
+            return "\n* ``{}`` :versionbadge:`clang-format {}`\n{}".format(
                 self.name,
                 self.version,
                 doxygen2rst(indent(self.comment, 2, indent_first_line=False)),
             )
-        return "\n* ``%s`` %s" % (
+        return "\n* ``{}`` {}".format(
             self.name,
             doxygen2rst(indent(self.comment, 2, indent_first_line=False)),
         )
 
 
-class Enum(object):
+class Enum:
     def __init__(self, name, comment):
         self.name = name
         self.comment = comment.strip()
@@ -173,7 +168,7 @@ class Enum(object):
         return "\n".join(map(str, self.values))
 
 
-class NestedEnum(object):
+class NestedEnum:
     def __init__(self, name, enumtype, comment, version, values):
         self.name = name
         self.comment = comment
@@ -184,14 +179,14 @@ class NestedEnum(object):
     def __str__(self):
         s = ""
         if self.version:
-            s = "\n* ``%s %s`` :versionbadge:`clang-format %s`\n\n%s" % (
+            s = "\n* ``{} {}`` :versionbadge:`clang-format {}`\n\n{}".format(
                 to_yaml_type(self.type),
                 self.name,
                 self.version,
                 doxygen2rst(indent(self.comment, 2)),
             )
         else:
-            s = "\n* ``%s %s``\n%s" % (
+            s = "\n* ``{} {}``\n{}".format(
                 to_yaml_type(self.type),
                 self.name,
                 doxygen2rst(indent(self.comment, 2)),
@@ -201,14 +196,14 @@ class NestedEnum(object):
         return s
 
 
-class EnumValue(object):
+class EnumValue:
     def __init__(self, name, comment, config):
         self.name = name
         self.comment = comment
         self.config = config
 
     def __str__(self):
-        return "* ``%s`` (in configuration: ``%s``)\n%s" % (
+        return "* ``{}`` (in configuration: ``{}``)\n{}".format(
             self.name,
             re.sub(".*_", "", self.config),
             doxygen2rst(indent(self.comment, 2)),
@@ -251,9 +246,7 @@ class OptionsReader:
         endcode_match = re.match(r"^/// +\\endcode$", line)
         if endcode_match:
             if not self.in_code_block:
-                self.__warning(
-                    "no correct `\\code` found before this `\\endcode`", line
-                )
+                self.__warning("no correct `\\code` found before this `\\endcode`", line)
             self.in_code_block = False
             return ""
 
@@ -347,9 +340,7 @@ class OptionsReader:
                     if line.startswith(prefix):
                         line = line[len(prefix) :]
                     state = State.InStruct
-                    field_type, field_name = re.match(
-                        r"([<>:\w(,\s)]+)\s+(\w+);", line
-                    ).groups()
+                    field_type, field_name = re.match(r"([<>:\w(,\s)]+)\s+(\w+);", line).groups()
                     if deprecated:
                         field_type = "deprecated"
                         deprecated = False
@@ -360,9 +351,7 @@ class OptionsReader:
                     options.append(option)
                     version = None
                 else:
-                    raise Exception(
-                        "Invalid format, expected comment, field or enum\n" + line
-                    )
+                    raise Exception("Invalid format, expected comment, field or enum\n" + line)
             elif state == State.InNestedStruct:
                 if line.startswith("///"):
                     state = State.InNestedFieldComment
@@ -383,9 +372,7 @@ class OptionsReader:
                     enum = Enum(name, comment)
                 else:
                     state = State.InNestedStruct
-                    field_type, field_name = re.match(
-                        r"([<>:\w(,\s)]+)\s+(\w+);", line
-                    ).groups()
+                    field_type, field_name = re.match(r"([<>:\w(,\s)]+)\s+(\w+);", line).groups()
                     # if not version:
                     #    self.__warning(f"missing version for {field_name}", line)
                     if field_type in enums:
@@ -492,7 +479,5 @@ with open(DOC_FILE, encoding="utf-8") as f:
 
 contents = substitute(contents, "FORMAT_STYLE_OPTIONS", options_text)
 
-with open(
-    args.output if args.output else DOC_FILE, "w", newline="", encoding="utf-8"
-) as f:
+with open(args.output if args.output else DOC_FILE, "w", newline="", encoding="utf-8") as f:
     f.write(contents)
