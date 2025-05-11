@@ -271,6 +271,16 @@ class Option:
         return s
 
 
+def enum_cxx_type_name_is_deprecated(name: str) -> bool:
+    r = name in (
+        "DefinitionReturnTypeBreakingStyle",
+        "ReturnTypeBreakingStyle",
+        "SpaceBeforeParensStyle",
+    )
+    print(f"enum_cxx_type_name_is_deprecated('{name}') = {r}")
+    return r
+
+
 @define(auto_attribs=True)
 class OptionsReader:
     header: TextIOWrapper
@@ -365,8 +375,6 @@ class OptionsReader:
         enum: Enum | None = None
         nested_struct: NestedStruct | None = None
         version: str | None = None
-        deprecated: bool = False
-        was_deprecated: bool = False
         field_type_str: str = "UNINIT_FIELD"
         field_type: Type | None = None
 
@@ -410,8 +418,6 @@ class OptionsReader:
                     match = re.match(r"/// \\version\s*(?P<version>[0-9.]+)*", line)
                     if match:
                         version = match.group("version")
-                elif line.startswith("/// @deprecated"):
-                    deprecated = True
                 elif line.startswith("///"):
                     comment += self.__clean_comment_line(line)
                 elif line.startswith("enum"):
@@ -425,10 +431,15 @@ class OptionsReader:
                     # rich.print(match.groups())
                     # rich.inspect(match.groups())
                     # field_type_str, field_name = match.group(0)
-                    field_type = Type.from_cxx(name, self.args)
+                    field_type = Type.from_cxx(
+                        name, self.args, enum_cxx_type_name_is_deprecated(name)
+                    )
                     if field_type is None:
                         raise ValueError("field_type not inited")
+                    if name == "ReturnTypeBreakingStyle":
+                        print(f"ReturnTypeBreakingStyle: line: {line} field_type: {field_type}")
                     enum = Enum(name, field_type, comment)
+                    field_type = None
                 elif line.startswith("struct"):
                     state = State.InNestedStruct
                     name = re.sub(r"struct\s+(\w+)\s*\{", "\\1", line)
@@ -442,10 +453,9 @@ class OptionsReader:
                     if match is None:
                         raise ValueError(f"bad RE on '{line}'")
                     field_type_str, field_name = match.groups()
-                    if deprecated:
-                        was_deprecated = True
-                        deprecated = False
-                    field_type = Type.from_cxx(field_type_str, self.args, was_deprecated)
+                    field_type = Type.from_cxx(
+                        field_type_str, self.args, enum_cxx_type_name_is_deprecated(field_type_str)
+                    )
                     if not version:
                         self.__warning(f"missing version for {field_name}", line)
                     print(f"type(field_type): {type(field_type)} field_type: {field_type}")
@@ -457,7 +467,6 @@ class OptionsReader:
                         self.args,
                     )
                     options.append(option)
-                    was_deprecated = False
                     version = None
                     field_type = None
                 else:
@@ -481,7 +490,13 @@ class OptionsReader:
                 elif line.startswith("enum"):
                     state = State.InNestedEnum
                     name = re.sub(r"enum\s+(\w+)\s*(:((\s*\w+)+)\s*)?\{", "\\1", line)
-                    enum = Enum(name, Type.from_cxx(name, self.args), comment)
+                    field_type = Type.from_cxx(
+                        name, self.args, enum_cxx_type_name_is_deprecated(name)
+                    )
+                    if name == "ReturnTypeBreakingStyle":
+                        print(f"ReturnTypeBreakingStyle: line: {line} field_type: {field_type}")
+                    enum = Enum(name, field_type, comment)
+                    field_type = None
                 else:
                     state = State.InNestedStruct
                     match = re.match(r"([<>:\w(,\s)]+)\s+(\w+);", line)
