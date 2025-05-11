@@ -108,33 +108,6 @@ def indent(text: str, columns: int, indent_first_line=True) -> str:
     return indent_str + s
 
 
-class Option:
-    def __init__(self, name, opt_type, comment, version, args) -> None:
-        self.name = name
-        self.type = opt_type
-        self.comment = comment.strip()
-        self.enum = None
-        self.nested_struct = None
-        self.version = version
-        self.args = args
-
-    def __str__(self) -> str:
-        s = ".. _{}:\n\n**{}** (``{}``) ".format(
-            self.name,
-            self.name,
-            to_yaml_type(self.type, self.args),
-        )
-        if self.version:
-            s += ":versionbadge:`clang-format %s` " % self.version
-        s += f":ref:`¶ <{self.name}>`\n{doxygen2rst(indent(self.comment, 2))}"
-        if self.enum and self.enum.values:
-            s += indent("\n\nPossible values:\n\n%s\n" % self.enum, 2)
-        if self.nested_struct:
-            s += indent("\n\nNested configuration flags:\n\n%s\n" % self.nested_struct, 2)
-            s = s.replace("<option-name>", self.name)
-        return s
-
-
 @define(auto_attribs=True, frozen=True)
 class NestedField:
     name: str
@@ -185,7 +158,7 @@ class NestedEnum:
     comment: str
     version: str | None
     values: list
-    args: argparse.Namespace
+    args: argparse.Namespace = field(repr=False)
 
     def __str__(self) -> str:
         s = ""
@@ -218,9 +191,36 @@ class NestedStruct:
 
 
 @define(auto_attribs=True)
+class Option:
+    name: str
+    type: str
+    comment: str = field(converter=str.strip)
+    version: str | None
+    args: argparse.Namespace = field(repr=False)
+    enum: Enum | None = field(init=False, default=None)
+    nested_struct: NestedStruct | None = field(init=False, default=None)
+
+    def __str__(self) -> str:
+        s = ".. _{}:\n\n**{}** (``{}``) ".format(
+            self.name,
+            self.name,
+            to_yaml_type(self.type, self.args),
+        )
+        if self.version:
+            s += ":versionbadge:`clang-format %s` " % self.version
+        s += f":ref:`¶ <{self.name}>`\n{doxygen2rst(indent(self.comment, 2))}"
+        if self.enum and self.enum.values:
+            s += indent("\n\nPossible values:\n\n%s\n" % self.enum, 2)
+        if self.nested_struct:
+            s += indent("\n\nNested configuration flags:\n\n%s\n" % self.nested_struct, 2)
+            s = s.replace("<option-name>", self.name)
+        return s
+
+
+@define(auto_attribs=True)
 class OptionsReader:
     header: TextIOWrapper
-    args: argparse.Namespace
+    args: argparse.Namespace = field(repr=False)
     in_code_block: bool = field(init=False, default=False)
     code_indent: int = field(init=False, default=0)
     lineno: int = field(init=False, default=0)
@@ -287,7 +287,7 @@ class OptionsReader:
             return ""
         return line[4:] + "\n"
 
-    def read_options(self):
+    def read_options(self) -> list[Option]:
         class State:
             (
                 BeforeStruct,
@@ -304,14 +304,14 @@ class OptionsReader:
 
         state = State.BeforeStruct
 
-        options = []
-        enums = {}
-        nested_structs = {}
-        comment = ""
+        options: list[Option] = []
+        enums: dict[str, Enum] = {}
+        nested_structs: dict[str, NestedStruct] = {}
+        comment: str = ""
         enum: Enum | None = None
         nested_struct: NestedStruct | None = None
         version: str | None = None
-        deprecated = False
+        deprecated: bool = False
 
         for line in self.header:
             self.lineno += 1
@@ -385,7 +385,10 @@ class OptionsReader:
                     enum = Enum(name, comment)
                 else:
                     state = State.InNestedStruct
-                    field_type, field_name = re.match(r"([<>:\w(,\s)]+)\s+(\w+);", line).groups()
+                    match = re.match(r"([<>:\w(,\s)]+)\s+(\w+);", line)
+                    if match is None:
+                        raise ValueError(f"bad RE on '{line}'")
+                    field_type, field_name = match.groups()
                     # if not version:
                     #     self.__warning(f"missing version for {field_name}", line)
                     if nested_struct is None:
@@ -412,6 +415,8 @@ class OptionsReader:
                     comment = self.__clean_comment_line(line)
                 elif line == "};":
                     state = State.InStruct
+                    if enum is None:
+                        raise ValueError("enum not initialized")
                     enums[enum.name] = enum
                 else:
                     # Enum member without documentation. Must be documented
@@ -423,6 +428,8 @@ class OptionsReader:
                     comment = self.__clean_comment_line(line)
                 elif line == "};":
                     state = State.InNestedStruct
+                    if enum is None:
+                        raise ValueError("enum not initialized")
                     enums[enum.name] = enum
                 else:
                     # Enum member without documentation. Must be
@@ -440,6 +447,8 @@ class OptionsReader:
                         val = val[:pos]
                     else:
                         config = val
+                    if enum is None:
+                        raise ValueError("enum not initialized")
                     enum.values.append(EnumValue(val, comment, config))
             elif state == State.InNestedEnumMemberComment:
                 if line.startswith("///"):
@@ -453,6 +462,8 @@ class OptionsReader:
                         val = val[:pos]
                     else:
                         config = val
+                    if enum is None:
+                        raise ValueError("enum not initialized")
                     enum.values.append(EnumValue(val, comment, config))
         if state != State.Finished:
             raise Exception("Not finished by the end of file")
