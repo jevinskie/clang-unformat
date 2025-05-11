@@ -15,6 +15,15 @@ from typing import Self
 import rich
 from attrs import Factory, define, field
 
+# from beartype import BeartypeConf
+# from beartype.claw import beartype_package, beartype_all, beartype_this_package
+# beartype_package("scripts")
+# beartype_this_package()
+# beartype_all(conf=BeartypeConf(violation_type=UserWarning))
+
+# foo: int = 5
+# foo = "bar"
+
 
 def CLANG_DIR(a: argparse.Namespace) -> Path:
     return a.clang_dir
@@ -118,14 +127,16 @@ class Type:
     is_deprecated: bool
 
     @classmethod
-    def from_cxx(cls, cxx_name: str, args: argparse.Namespace) -> Self:
-        return cls(
+    def from_cxx(cls, cxx_name: str, args: argparse.Namespace, is_deprecated: bool = False) -> Self:
+        r = cls(
             cxx_name,
             to_yaml_type(cxx_name, args),
             cxx_name.startswith("std::vector"),
             cxx_name.startswith("std::optional"),
-            cxx_name == "deprecated",
+            is_deprecated,
         )
+        print(f"from_cxx: cls: {cls} cxx_name: '{cxx_name}' dep: {is_deprecated} r: {r}")
+        return r
 
 
 @define(auto_attribs=True, frozen=True)
@@ -203,11 +214,6 @@ class NestedEnum:
     version: Version | None = field(converter=Version.from_opt_str)
     values: list
     args: argparse.Namespace = field(repr=False)
-    orig_type: str = field(init=False)
-
-    def __attrs_post_init__(self) -> None:
-        object.__setattr__(self, "orig_type", self.type)
-        object.__setattr__(self, "type", Type.from_cxx(self.orig_type, self.args))
 
     def __str__(self) -> str:
         s = ""
@@ -248,11 +254,6 @@ class Option:
     args: argparse.Namespace = field(repr=False)
     enum: Enum | None = field(init=False, default=None)
     nested_struct: NestedStruct | None = field(init=False, default=None)
-    orig_type: str = field(init=False)
-
-    def __attrs_post_init__(self) -> None:
-        object.__setattr__(self, "orig_type", self.type)
-        object.__setattr__(self, "type", Type.from_cxx(self.orig_type, self.args))
 
     def __str__(self) -> str:
         s = f".. _{self.name}:\n\n**{self.name}** (``{self.type.yaml_name}``) "
@@ -362,6 +363,7 @@ class OptionsReader:
         nested_struct: NestedStruct | None = None
         version: str | None = None
         deprecated: bool = False
+        was_deprecated: bool = False
 
         BuiltinBool = Type.from_cxx("bool", self.args)
         BuiltinUnsigned = Type.from_cxx("unsigned", self.args)
@@ -426,13 +428,21 @@ class OptionsReader:
                         raise ValueError(f"bad RE on '{line}'")
                     field_type, field_name = match.groups()
                     if deprecated:
-                        field_type = "deprecated"
+                        was_deprecated = True
                         deprecated = False
 
                     if not version:
                         self.__warning(f"missing version for {field_name}", line)
-                    option = Option(field_name, field_type, comment, version, self.args)
+                    print(f"type(field_type): {type(field_type)} field_type: {field_type}")
+                    option = Option(
+                        field_name,
+                        Type.from_cxx(field_type, self.args, was_deprecated),
+                        comment,
+                        version,
+                        self.args,
+                    )
                     options.append(option)
+                    was_deprecated = False
                     version = None
                 else:
                     raise ValueError("Invalid format, expected comment, field or enum\n" + line)
@@ -467,10 +477,13 @@ class OptionsReader:
                     if nested_struct is None:
                         raise ValueError("nested_struct not initialized")
                     if field_type in enums:
+                        print(
+                            f"type(field_type) in enums nested_struct: {type(field_type)} field_type: {field_type}"
+                        )
                         nested_struct.values.append(
                             NestedEnum(
                                 field_name,
-                                field_type,
+                                Type.from_cxx(field_type, self.args),
                                 comment,
                                 version,
                                 enums[field_type].values,
@@ -478,6 +491,9 @@ class OptionsReader:
                             )
                         )
                     else:
+                        print(
+                            f"type(field_type) in enums nested_struct 2: {type(field_type)} field_type: {field_type} type(field_name): {type(field_name)} field_name: {field_name}"
+                        )
                         nested_struct.values.append(
                             NestedField(field_type + " " + field_name, comment, version)
                         )
