@@ -16,19 +16,19 @@ import rich
 from attrs import Factory, define, field
 
 
-def CLANG_DIR(a) -> Path:
+def CLANG_DIR(a: argparse.Namespace) -> Path:
     return a.clang_dir
 
 
-def FORMAT_STYLE_FILE(a) -> Path:
+def FORMAT_STYLE_FILE(a: argparse.Namespace) -> Path:
     return CLANG_DIR(a) / "include/clang/Format/Format.h"
 
 
-def INCLUDE_STYLE_FILE(a) -> Path:
+def INCLUDE_STYLE_FILE(a: argparse.Namespace) -> Path:
     return CLANG_DIR(a) / "include/clang/Tooling/Inclusions/IncludeStyle.h"
 
 
-def PLURALS_FILE(a) -> Path:
+def PLURALS_FILE(a: argparse.Namespace) -> Path:
     return CLANG_DIR(a) / "docs/tools/plurals.txt"
 
 
@@ -94,14 +94,14 @@ def to_yaml_type(typestr: str, args: argparse.Namespace) -> str:
     return typestr
 
 
-def doxygen2rst(text) -> str:
+def doxygen2rst(text: str) -> str:
     text = re.sub(r"<tt>\s*(.*?)\s*<\/tt>", r"``\1``", text)
     text = re.sub(r"\\c ([^ ,;\.]+)", r"``\1``", text)
     text = re.sub(r"\\\w+ ", "", text)
     return text
 
 
-def indent(text: str, columns: int, indent_first_line=True) -> str:
+def indent(text: str, columns: int, indent_first_line: bool = True) -> str:
     indent_str = " " * columns
     s = re.sub(r"\n([^\n])", "\n" + indent_str + "\\1", text, flags=re.S)
     if not indent_first_line or s.startswith("\n"):
@@ -226,18 +226,14 @@ class Option:
     nested_struct: NestedStruct | None = field(init=False, default=None)
 
     def __str__(self) -> str:
-        s = ".. _{}:\n\n**{}** (``{}``) ".format(
-            self.name,
-            self.name,
-            to_yaml_type(self.type, self.args),
-        )
+        s = f".. _{self.name}:\n\n**{self.name}** (``{to_yaml_type(self.type, self.args)}``) "
         if self.version:
-            s += ":versionbadge:`clang-format %s` " % self.version
+            s += f":versionbadge:`clang-format {self.version}` "
         s += f":ref:`¶ <{self.name}>`\n{doxygen2rst(indent(self.comment, 2))}"
         if self.enum and self.enum.values:
-            s += indent("\n\nPossible values:\n\n%s\n" % self.enum, 2)
+            s += indent(f"\n\nPossible values:\n\n{self.enum}\n", 2)
         if self.nested_struct:
-            s += indent("\n\nNested configuration flags:\n\n%s\n" % self.nested_struct, 2)
+            s += indent(f"\n\nNested configuration flags:\n\n{self.nested_struct}\n", 2)
             s = s.replace("<option-name>", self.name)
         return s
 
@@ -510,7 +506,7 @@ class OptionsReader:
                 elif option.type in nested_structs:
                     option.nested_struct = nested_structs[option.type]
                 else:
-                    raise Exception("Unknown type: %s" % option.type)
+                    raise ValueError(f"Unknown type: {option.type}")
         return options
 
 
