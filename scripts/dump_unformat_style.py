@@ -12,7 +12,7 @@ from io import TextIOWrapper
 from pathlib import Path
 from typing import Self
 
-import rich
+# import rich
 from attrs import Factory, define, field
 
 # from beartype import BeartypeConf
@@ -128,15 +128,13 @@ class Type:
 
     @classmethod
     def from_cxx(cls, cxx_name: str, args: argparse.Namespace, is_deprecated: bool = False) -> Self:
-        r = cls(
+        return cls(
             cxx_name,
             to_yaml_type(cxx_name, args),
             cxx_name.startswith("std::vector"),
             cxx_name.startswith("std::optional"),
             is_deprecated,
         )
-        print(f"from_cxx: cls: {cls} cxx_name: '{cxx_name}' dep: {is_deprecated} r: {r}")
-        return r
 
 
 @define(auto_attribs=True, frozen=True)
@@ -272,13 +270,11 @@ class Option:
 
 
 def enum_cxx_type_name_is_deprecated(name: str) -> bool:
-    r = name in (
+    return name in (
         "DefinitionReturnTypeBreakingStyle",
         "ReturnTypeBreakingStyle",
         "SpaceBeforeParensStyle",
     )
-    print(f"enum_cxx_type_name_is_deprecated('{name}') = {r}")
-    return r
 
 
 @define(auto_attribs=True)
@@ -423,21 +419,9 @@ class OptionsReader:
                 elif line.startswith("enum"):
                     state = State.InEnum
                     name = re.sub(r"enum\s+(\w+)\s*(:((\s*\w+)+)\s*)?\{", "\\1", line)
-                    # match = re.match(r"enum\s+(\w+)\s*(:((\s*\w+)+)\s*)?\{", line)
-                    # if match is None:
-                    #     raise ValueError(f"bad RE on '{line}'")
-                    # rich.print(match)
-                    # rich.inspect(match)
-                    # rich.print(match.groups())
-                    # rich.inspect(match.groups())
-                    # field_type_str, field_name = match.group(0)
                     field_type = Type.from_cxx(
                         name, self.args, enum_cxx_type_name_is_deprecated(name)
                     )
-                    if field_type is None:
-                        raise ValueError("field_type not inited")
-                    if name == "ReturnTypeBreakingStyle":
-                        print(f"ReturnTypeBreakingStyle: line: {line} field_type: {field_type}")
                     enum = Enum(name, field_type, comment)
                     field_type = None
                 elif line.startswith("struct"):
@@ -458,7 +442,6 @@ class OptionsReader:
                     )
                     if not version:
                         self.__warning(f"missing version for {field_name}", line)
-                    print(f"type(field_type): {type(field_type)} field_type: {field_type}")
                     option = Option(
                         field_name,
                         field_type,
@@ -509,9 +492,6 @@ class OptionsReader:
                         raise ValueError("nested_struct not initialized")
                     field_type = Type.from_cxx(field_type_str, self.args)
                     if field_type in enums:
-                        print(
-                            f"type(field_type) in enums nested_struct: {type(field_type)} field_type: {field_type}"
-                        )
                         new_nested_enum = NestedEnum(
                             field_name,
                             field_type,
@@ -525,18 +505,13 @@ class OptionsReader:
                                 f"new_nested_enum in nested_struct.values: {new_nested_enum}"
                             )
                         nested_struct.values.append(new_nested_enum)
-                        new_nested_enum = None
                     else:
-                        print(
-                            f"type(field_type) in enums nested_struct 2: {type(field_type)} field_type: {field_type} type(field_name): {type(field_name)} field_name: {field_name}"
-                        )
                         new_nested_field = NestedField(field_name, field_type, comment, version)
                         if new_nested_field in nested_struct.values:
                             raise ValueError(
                                 f"new_nested_field in nested_struct.values: {new_nested_field}"
                             )
                         nested_struct.values.append(new_nested_field)
-                        new_nested_field = None
                     version = None
                     field_type = None
             elif state == State.InEnum:
@@ -627,7 +602,8 @@ def real_main(args: argparse.Namespace) -> None:
         opts += OptionsReader(f, args).read_options()
 
     opts = sorted(opts, key=lambda x: x.name)
-    rich.print(opts)
+    # rich.print(opts)
+    print(opts)
     options_text = "\n\n".join(map(str, opts))
 
     with open(args.output, "w") as f:
