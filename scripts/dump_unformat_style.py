@@ -166,6 +166,7 @@ class Version:
 @define(auto_attribs=True, frozen=True)
 class NestedField:
     name: str
+    type: Type
     comment: str = field(converter=str.strip, repr=False)
     version: Version | None = field(converter=Version.from_opt_str)
 
@@ -199,6 +200,7 @@ class EnumValue:
 @define(auto_attribs=True, frozen=True)
 class Enum:
     name: str
+    type: Type
     comment: str = field(converter=str.strip, repr=False)
     values: list[EnumValue] = Factory(list)
 
@@ -238,6 +240,7 @@ class NestedEnum:
 @define(auto_attribs=True, frozen=True)
 class NestedStruct:
     name: str
+    type: Type
     comment: str = field(converter=str.strip, repr=False)
     values: list[NestedEnum | NestedField] = Factory(list)
 
@@ -356,14 +359,16 @@ class OptionsReader:
         state = State.BeforeStruct
 
         options: list[Option] = []
-        enums: dict[str | Type, Enum] = {}
-        nested_structs: dict[str | Type, NestedStruct] = {}
+        enums: dict[Type, Enum] = {}
+        nested_structs: dict[Type, NestedStruct] = {}
         comment: str = ""
         enum: Enum | None = None
         nested_struct: NestedStruct | None = None
         version: str | None = None
         deprecated: bool = False
         was_deprecated: bool = False
+        field_type_str: str = "UNINIT_FIELD"
+        field_type: Type | None = None
 
         BuiltinBool = Type.from_cxx("bool", self.args)
         BuiltinUnsigned = Type.from_cxx("unsigned", self.args)
@@ -373,7 +378,7 @@ class OptionsReader:
         BuiltinIncludeCategoryList = Type.from_cxx("std::vector<IncludeCategory>", self.args)
         BuiltinRawStringFormatList = Type.from_cxx("std::vector<RawStringFormat>", self.args)
         BuiltinOptionalUnsigned = Type.from_cxx("std::optional<unsigned>", self.args)
-        BuiltinDeprecated = Type.from_cxx("deprecated", self.args)
+        BuiltinDeprecated = Type.from_cxx("deprecated", self.args, is_deprecated=True)
 
         builtin_types: list[Type] = [
             BuiltinBool,
@@ -386,7 +391,6 @@ class OptionsReader:
             BuiltinOptionalUnsigned,
             BuiltinDeprecated,
         ]
-        builtin_types_cxx_names: list[str] = [t.cxx_name for t in builtin_types]
 
         for line in self.header:
             self.lineno += 1
@@ -413,11 +417,22 @@ class OptionsReader:
                 elif line.startswith("enum"):
                     state = State.InEnum
                     name = re.sub(r"enum\s+(\w+)\s*(:((\s*\w+)+)\s*)?\{", "\\1", line)
-                    enum = Enum(name, comment)
+                    # match = re.match(r"enum\s+(\w+)\s*(:((\s*\w+)+)\s*)?\{", line)
+                    # if match is None:
+                    #     raise ValueError(f"bad RE on '{line}'")
+                    # rich.print(match)
+                    # rich.inspect(match)
+                    # rich.print(match.groups())
+                    # rich.inspect(match.groups())
+                    # field_type_str, field_name = match.group(0)
+                    field_type = Type.from_cxx(name, self.args)
+                    if field_type is None:
+                        raise ValueError("field_type not inited")
+                    enum = Enum(name, field_type, comment)
                 elif line.startswith("struct"):
                     state = State.InNestedStruct
                     name = re.sub(r"struct\s+(\w+)\s*\{", "\\1", line)
-                    nested_struct = NestedStruct(name, comment)
+                    nested_struct = NestedStruct(name, Type.from_cxx(name, self.args), comment)
                 elif line.endswith(";"):
                     prefix = "// "
                     if line.startswith(prefix):
@@ -426,17 +441,17 @@ class OptionsReader:
                     match = re.match(r"([<>:\w(,\s)]+)\s+(\w+);", line)
                     if match is None:
                         raise ValueError(f"bad RE on '{line}'")
-                    field_type, field_name = match.groups()
+                    field_type_str, field_name = match.groups()
                     if deprecated:
                         was_deprecated = True
                         deprecated = False
-
+                    field_type = Type.from_cxx(field_type_str, self.args, was_deprecated)
                     if not version:
                         self.__warning(f"missing version for {field_name}", line)
                     print(f"type(field_type): {type(field_type)} field_type: {field_type}")
                     option = Option(
                         field_name,
-                        Type.from_cxx(field_type, self.args, was_deprecated),
+                        field_type,
                         comment,
                         version,
                         self.args,
@@ -444,6 +459,7 @@ class OptionsReader:
                     options.append(option)
                     was_deprecated = False
                     version = None
+                    field_type = None
                 else:
                     raise ValueError("Invalid format, expected comment, field or enum\n" + line)
             elif state == State.InNestedStruct:
@@ -454,7 +470,7 @@ class OptionsReader:
                     state = State.InStruct
                     if nested_struct is None:
                         raise ValueError("nested_struct not initialized")
-                    nested_structs[nested_struct.name] = nested_struct
+                    nested_structs[nested_struct.type] = nested_struct
             elif state == State.InNestedFieldComment:
                 if line.startswith(r"/// \version"):
                     match = re.match(r"/// \\version\s*(?P<version>[0-9.]+)*", line)
@@ -465,17 +481,18 @@ class OptionsReader:
                 elif line.startswith("enum"):
                     state = State.InNestedEnum
                     name = re.sub(r"enum\s+(\w+)\s*(:((\s*\w+)+)\s*)?\{", "\\1", line)
-                    enum = Enum(name, comment)
+                    enum = Enum(name, Type.from_cxx(name, self.args), comment)
                 else:
                     state = State.InNestedStruct
                     match = re.match(r"([<>:\w(,\s)]+)\s+(\w+);", line)
                     if match is None:
                         raise ValueError(f"bad RE on '{line}'")
-                    field_type, field_name = match.groups()
+                    field_type_str, field_name = match.groups()
                     # if not version:
-                    #     self.__warning(f"missing version for {field_name}", line)
+                    #     self.__warning(f"missing version for {field_type_str}", line)
                     if nested_struct is None:
                         raise ValueError("nested_struct not initialized")
+                    field_type = Type.from_cxx(field_type_str, self.args)
                     if field_type in enums:
                         print(
                             f"type(field_type) in enums nested_struct: {type(field_type)} field_type: {field_type}"
@@ -483,7 +500,7 @@ class OptionsReader:
                         nested_struct.values.append(
                             NestedEnum(
                                 field_name,
-                                Type.from_cxx(field_type, self.args),
+                                field_type,
                                 comment,
                                 version,
                                 enums[field_type].values,
@@ -495,9 +512,12 @@ class OptionsReader:
                             f"type(field_type) in enums nested_struct 2: {type(field_type)} field_type: {field_type} type(field_name): {type(field_name)} field_name: {field_name}"
                         )
                         nested_struct.values.append(
-                            NestedField(field_type + " " + field_name, comment, version)
+                            NestedField(
+                                field_type.cxx_name + " " + field_name, field_type, comment, version
+                            )
                         )
                     version = None
+                    field_type = None
             elif state == State.InEnum:
                 if line.startswith("///"):
                     state = State.InEnumMemberComment
@@ -506,7 +526,7 @@ class OptionsReader:
                     state = State.InStruct
                     if enum is None:
                         raise ValueError("enum not initialized")
-                    enums[enum.name] = enum
+                    enums[enum.type] = enum
                 else:
                     # Enum member without documentation. Must be documented
                     # where the enum is used.
@@ -519,7 +539,7 @@ class OptionsReader:
                     state = State.InNestedStruct
                     if enum is None:
                         raise ValueError("enum not initialized")
-                    enums[enum.name] = enum
+                    enums[enum.type] = enum
                 else:
                     # Enum member without documentation. Must be
                     # documented where the enum is used.
@@ -558,13 +578,13 @@ class OptionsReader:
             raise RuntimeError("Not finished by the end of file")
 
         for option in options:
-            if option.type.cxx_name not in builtin_types_cxx_names:
+            if option.type not in builtin_types:
                 if option.type in enums:
                     option.enum = enums[option.type]
                 elif option.type in nested_structs:
                     option.nested_struct = nested_structs[option.type]
                 else:
-                    raise ValueError(f"Unknown type: {option.type}")
+                    raise ValueError(f"Unknown type: {option.type} option: {option}")
         return options
 
 
