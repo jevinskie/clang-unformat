@@ -11,6 +11,9 @@ import sys
 from io import TextIOWrapper
 from pathlib import Path
 
+import rich
+from attrs import Factory, define, field
+
 
 def CLANG_DIR(a) -> Path:
     return a.clang_dir
@@ -24,10 +27,6 @@ def INCLUDE_STYLE_FILE(a) -> Path:
     return CLANG_DIR(a) / "include/clang/Tooling/Inclusions/IncludeStyle.h"
 
 
-def DOC_FILE(a) -> Path:
-    return CLANG_DIR(a) / "docs/ClangFormatStyleOptions.rst"
-
-
 def PLURALS_FILE(a) -> Path:
     return CLANG_DIR(a) / "docs/tools/plurals.txt"
 
@@ -35,13 +34,7 @@ def PLURALS_FILE(a) -> Path:
 plurals: set[str] = set()
 
 
-def substitute(text, tag, contents):
-    replacement = f"\n.. START_{tag}\n\n{contents}\n\n.. END_{tag}\n"
-    pattern = rf"\n\.\. START_{tag}\n.*\n\.\. END_{tag}\n"
-    return re.sub(pattern, "%s", text, flags=re.S) % replacement
-
-
-def register_plural(singular: str, plural: str, args: argparse.Namespace):
+def register_plural(singular: str, plural: str, args: argparse.Namespace) -> str:
     if plural not in plurals:
         if not hasattr(register_plural, "generated_new_plural"):
             print(
@@ -49,7 +42,7 @@ def register_plural(singular: str, plural: str, args: argparse.Namespace):
                 f"`git checkout -- {os.path.relpath(PLURALS_FILE(args))}` "
                 "to reemit warnings or `git add` to include new plurals\n"
             )
-        register_plural.generated_new_plural = True
+        register_plural.generated_new_plural = True  # type: ignore
 
         plurals.add(plural)
         with open(PLURALS_FILE(args), "a") as f:
@@ -65,7 +58,7 @@ def register_plural(singular: str, plural: str, args: argparse.Namespace):
     return plural
 
 
-def pluralize(word: str, args: argparse.Namespace):
+def pluralize(word: str, args: argparse.Namespace) -> str:
     lword = word.lower()
     if len(lword) >= 2 and lword[-1] == "y" and lword[-2] not in "aeiou":
         return register_plural(word, word[:-1] + "ies", args)
@@ -79,7 +72,7 @@ def pluralize(word: str, args: argparse.Namespace):
         return register_plural(word, word + "s", args)
 
 
-def to_yaml_type(typestr: str, args: argparse.Namespace):
+def to_yaml_type(typestr: str, args: argparse.Namespace) -> str:
     if typestr == "bool":
         return "Boolean"
     elif typestr == "int":
@@ -100,14 +93,14 @@ def to_yaml_type(typestr: str, args: argparse.Namespace):
     return typestr
 
 
-def doxygen2rst(text):
+def doxygen2rst(text) -> str:
     text = re.sub(r"<tt>\s*(.*?)\s*<\/tt>", r"``\1``", text)
     text = re.sub(r"\\c ([^ ,;\.]+)", r"``\1``", text)
     text = re.sub(r"\\\w+ ", "", text)
     return text
 
 
-def indent(text, columns, indent_first_line=True):
+def indent(text: str, columns: int, indent_first_line=True) -> str:
     indent_str = " " * columns
     s = re.sub(r"\n([^\n])", "\n" + indent_str + "\\1", text, flags=re.S)
     if not indent_first_line or s.startswith("\n"):
@@ -116,7 +109,7 @@ def indent(text, columns, indent_first_line=True):
 
 
 class Option:
-    def __init__(self, name, opt_type, comment, version, args):
+    def __init__(self, name, opt_type, comment, version, args) -> None:
         self.name = name
         self.type = opt_type
         self.comment = comment.strip()
@@ -125,7 +118,7 @@ class Option:
         self.version = version
         self.args = args
 
-    def __str__(self):
+    def __str__(self) -> str:
         s = ".. _{}:\n\n**{}** (``{}``) ".format(
             self.name,
             self.name,
@@ -142,23 +135,13 @@ class Option:
         return s
 
 
-class NestedStruct:
-    def __init__(self, name, comment):
-        self.name = name
-        self.comment = comment.strip()
-        self.values = []
-
-    def __str__(self):
-        return self.comment + "\n" + "\n".join(map(str, self.values))
-
-
+@define(auto_attribs=True, frozen=True)
 class NestedField:
-    def __init__(self, name, comment, version):
-        self.name = name
-        self.comment = comment.strip()
-        self.version = version
+    name: str
+    comment: str = field(converter=str.strip)
+    version: str | None
 
-    def __str__(self):
+    def __str__(self) -> str:
         if self.version:
             return "\n* ``{}`` :versionbadge:`clang-format {}`\n{}".format(
                 self.name,
@@ -171,26 +154,40 @@ class NestedField:
         )
 
 
-class Enum:
-    def __init__(self, name, comment):
-        self.name = name
-        self.comment = comment.strip()
-        self.values = []
+@define(auto_attribs=True, frozen=True)
+class EnumValue:
+    name: str
+    comment: str
+    config: str
 
-    def __str__(self):
+    def __str__(self) -> str:
+        return "* ``{}`` (in configuration: ``{}``)\n{}".format(
+            self.name,
+            re.sub(".*_", "", self.config),
+            doxygen2rst(indent(self.comment, 2)),
+        )
+
+
+@define(auto_attribs=True, frozen=True)
+class Enum:
+    name: str
+    comment: str = field(converter=str.strip)
+    values: list[EnumValue] = Factory(list)
+
+    def __str__(self) -> str:
         return "\n".join(map(str, self.values))
 
 
+@define(auto_attribs=True, frozen=True)
 class NestedEnum:
-    def __init__(self, name, enumtype, comment, version, values, args):
-        self.name = name
-        self.comment = comment
-        self.values = values
-        self.type = enumtype
-        self.version = version
-        self.args = args
+    name: str
+    type: str
+    comment: str
+    version: str | None
+    values: list
+    args: argparse.Namespace
 
-    def __str__(self):
+    def __str__(self) -> str:
         s = ""
         if self.version:
             s = "\n* ``{} {}`` :versionbadge:`clang-format {}`\n\n{}".format(
@@ -210,40 +207,36 @@ class NestedEnum:
         return s
 
 
-class EnumValue:
-    def __init__(self, name, comment, config):
-        self.name = name
-        self.comment = comment
-        self.config = config
+@define(auto_attribs=True, frozen=True)
+class NestedStruct:
+    name: str
+    comment: str = field(converter=str.strip)
+    values: list[NestedEnum | NestedField] = Factory(list)
 
-    def __str__(self):
-        return "* ``{}`` (in configuration: ``{}``)\n{}".format(
-            self.name,
-            re.sub(".*_", "", self.config),
-            doxygen2rst(indent(self.comment, 2)),
-        )
+    def __str__(self) -> str:
+        return self.comment + "\n" + "\n".join(map(str, self.values))
 
 
+@define(auto_attribs=True)
 class OptionsReader:
-    def __init__(self, header: TextIOWrapper, args: argparse.Namespace):
-        self.header = header
-        self.in_code_block = False
-        self.code_indent = 0
-        self.lineno = 0
-        self.last_err_lineno = -1
-        self.args = args
+    header: TextIOWrapper
+    args: argparse.Namespace
+    in_code_block: bool = field(init=False, default=False)
+    code_indent: int = field(init=False, default=0)
+    lineno: int = field(init=False, default=0)
+    last_err_lineno: int = field(init=False, default=-1)
 
-    def __file_path(self):
-        return os.path.relpath(self.header.name)
+    def __file_path(self) -> str:
+        return os.path.relpath(self.header.name, str(self.args.clang_dir))
 
-    def __print_line(self, line: str):
+    def __print_line(self, line: str) -> None:
         print(f"{self.lineno:>6} | {line}", file=sys.stderr)
 
-    def __warning(self, msg: str, line: str):
+    def __warning(self, msg: str, line: str) -> None:
         print(f"{self.__file_path()}:{self.lineno}: warning: {msg}:", file=sys.stderr)
         self.__print_line(line)
 
-    def __clean_comment_line(self, line: str):
+    def __clean_comment_line(self, line: str) -> str:
         match = re.match(r"^/// (?P<indent> +)?\\code(\{.(?P<lang>\w+)\})?$", line)
         if match:
             if self.in_code_block:
@@ -315,9 +308,9 @@ class OptionsReader:
         enums = {}
         nested_structs = {}
         comment = ""
-        enum = None
-        nested_struct = None
-        version = None
+        enum: Enum | None = None
+        nested_struct: NestedStruct | None = None
+        version: str | None = None
         deprecated = False
 
         for line in self.header:
@@ -355,7 +348,10 @@ class OptionsReader:
                     if line.startswith(prefix):
                         line = line[len(prefix) :]
                     state = State.InStruct
-                    field_type, field_name = re.match(r"([<>:\w(,\s)]+)\s+(\w+);", line).groups()
+                    match = re.match(r"([<>:\w(,\s)]+)\s+(\w+);", line)
+                    if match is None:
+                        raise ValueError(f"bad RE on '{line}'")
+                    field_type, field_name = match.groups()
                     if deprecated:
                         field_type = "deprecated"
                         deprecated = False
@@ -373,6 +369,8 @@ class OptionsReader:
                     comment = self.__clean_comment_line(line)
                 elif line == "};":
                     state = State.InStruct
+                    if nested_struct is None:
+                        raise ValueError("nested_struct not initialized")
                     nested_structs[nested_struct.name] = nested_struct
             elif state == State.InNestedFieldComment:
                 if line.startswith(r"/// \version"):
@@ -389,7 +387,9 @@ class OptionsReader:
                     state = State.InNestedStruct
                     field_type, field_name = re.match(r"([<>:\w(,\s)]+)\s+(\w+);", line).groups()
                     # if not version:
-                    #    self.__warning(f"missing version for {field_name}", line)
+                    #     self.__warning(f"missing version for {field_name}", line)
+                    if nested_struct is None:
+                        raise ValueError("nested_struct not initialized")
                     if field_type in enums:
                         nested_struct.values.append(
                             NestedEnum(
@@ -496,17 +496,11 @@ def real_main(args: argparse.Namespace) -> None:
         opts += OptionsReader(f, args).read_options()
 
     opts = sorted(opts, key=lambda x: x.name)
+    rich.print(opts)
     options_text = "\n\n".join(map(str, opts))
 
-    with open(DOC_FILE(args), encoding="utf-8") as f:
-        contents = f.read()
-
-    contents = substitute(contents, "FORMAT_STYLE_OPTIONS", options_text)
-
-    with open(
-        args.output if args.output else DOC_FILE(args), "w", newline="", encoding="utf-8"
-    ) as f:
-        f.write(contents)
+    with open(args.output, "w") as f:
+        f.write(options_text)
 
 
 def main() -> None:
