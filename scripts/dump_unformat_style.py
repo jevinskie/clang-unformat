@@ -435,7 +435,7 @@ class OptionsReader:
                     options.append(option)
                     version = None
                 else:
-                    raise Exception("Invalid format, expected comment, field or enum\n" + line)
+                    raise ValueError("Invalid format, expected comment, field or enum\n" + line)
             elif state == State.InNestedStruct:
                 if line.startswith("///"):
                     state = State.InNestedFieldComment
@@ -539,7 +539,7 @@ class OptionsReader:
                         raise ValueError("enum not initialized")
                     enum.values.append(EnumValue(val, comment, config))
         if state != State.Finished:
-            raise Exception("Not finished by the end of file")
+            raise RuntimeError("Not finished by the end of file")
 
         for option in options:
             if option.type.cxx_name not in builtin_types_cxx_names:
