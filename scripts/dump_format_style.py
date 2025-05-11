@@ -9,44 +9,38 @@ import os
 import re
 import sys
 from io import TextIOWrapper
-from pathlib import Path
-from typing import Self
 
-import rich
-from attrs import Factory, define, field
+CLANG_DIR = os.path.join(os.path.dirname(__file__), "../..")
+FORMAT_STYLE_FILE = os.path.join(CLANG_DIR, "include/clang/Format/Format.h")
+INCLUDE_STYLE_FILE = os.path.join(CLANG_DIR, "include/clang/Tooling/Inclusions/IncludeStyle.h")
+DOC_FILE = os.path.join(CLANG_DIR, "docs/ClangFormatStyleOptions.rst")
 
-
-def CLANG_DIR(a) -> Path:
-    return a.clang_dir
-
-
-def FORMAT_STYLE_FILE(a) -> Path:
-    return CLANG_DIR(a) / "include/clang/Format/Format.h"
-
-
-def INCLUDE_STYLE_FILE(a) -> Path:
-    return CLANG_DIR(a) / "include/clang/Tooling/Inclusions/IncludeStyle.h"
-
-
-def PLURALS_FILE(a) -> Path:
-    return CLANG_DIR(a) / "docs/tools/plurals.txt"
-
+PLURALS_FILE = os.path.join(os.path.dirname(__file__), "plurals.txt")
 
 plurals: set[str] = set()
+with open(PLURALS_FILE) as f:
+    f.seek(0)
+    plurals = set(f.read().splitlines())
 
 
-def register_plural(singular: str, plural: str, args: argparse.Namespace) -> str:
+def substitute(text, tag, contents):
+    replacement = f"\n.. START_{tag}\n\n{contents}\n\n.. END_{tag}\n"
+    pattern = rf"\n\.\. START_{tag}\n.*\n\.\. END_{tag}\n"
+    return re.sub(pattern, "%s", text, flags=re.S) % replacement
+
+
+def register_plural(singular: str, plural: str):
     if plural not in plurals:
         if not hasattr(register_plural, "generated_new_plural"):
             print(
                 "Plural generation: you can use "
-                f"`git checkout -- {os.path.relpath(PLURALS_FILE(args))}` "
+                f"`git checkout -- {os.path.relpath(PLURALS_FILE)}` "
                 "to reemit warnings or `git add` to include new plurals\n"
             )
-        register_plural.generated_new_plural = True  # type: ignore
+        register_plural.generated_new_plural = True
 
         plurals.add(plural)
-        with open(PLURALS_FILE(args), "a") as f:
+        with open(PLURALS_FILE, "a") as f:
             f.write(plural + "\n")
         cf = inspect.currentframe()
         lineno = ""
@@ -59,21 +53,21 @@ def register_plural(singular: str, plural: str, args: argparse.Namespace) -> str
     return plural
 
 
-def pluralize(word: str, args: argparse.Namespace) -> str:
+def pluralize(word: str):
     lword = word.lower()
     if len(lword) >= 2 and lword[-1] == "y" and lword[-2] not in "aeiou":
-        return register_plural(word, word[:-1] + "ies", args)
+        return register_plural(word, word[:-1] + "ies")
     elif lword.endswith(("s", "sh", "ch", "x", "z")):
-        return register_plural(word, word[:-1] + "es", args)
+        return register_plural(word, word[:-1] + "es")
     elif lword.endswith("fe"):
-        return register_plural(word, word[:-2] + "ves", args)
+        return register_plural(word, word[:-2] + "ves")
     elif lword.endswith("f") and not lword.endswith("ff"):
-        return register_plural(word, word[:-1] + "ves", args)
+        return register_plural(word, word[:-1] + "ves")
     else:
-        return register_plural(word, word + "s", args)
+        return register_plural(word, word + "s")
 
 
-def to_yaml_type(typestr: str, args: argparse.Namespace) -> str:
+def to_yaml_type(typestr: str):
     if typestr == "bool":
         return "Boolean"
     elif typestr == "int":
@@ -85,23 +79,23 @@ def to_yaml_type(typestr: str, args: argparse.Namespace) -> str:
 
     match = re.match(r"std::vector<(.*)>$", typestr)
     if match:
-        return "List of " + pluralize(to_yaml_type(match.group(1), args), args)
+        return "List of " + pluralize(to_yaml_type(match.group(1)))
 
     match = re.match(r"std::optional<(.*)>$", typestr)
     if match:
-        return to_yaml_type(match.group(1), args)
+        return to_yaml_type(match.group(1))
 
     return typestr
 
 
-def doxygen2rst(text) -> str:
+def doxygen2rst(text):
     text = re.sub(r"<tt>\s*(.*?)\s*<\/tt>", r"``\1``", text)
     text = re.sub(r"\\c ([^ ,;\.]+)", r"``\1``", text)
     text = re.sub(r"\\\w+ ", "", text)
     return text
 
 
-def indent(text: str, columns: int, indent_first_line=True) -> str:
+def indent(text, columns, indent_first_line=True):
     indent_str = " " * columns
     s = re.sub(r"\n([^\n])", "\n" + indent_str + "\\1", text, flags=re.S)
     if not indent_first_line or s.startswith("\n"):
@@ -109,127 +103,20 @@ def indent(text: str, columns: int, indent_first_line=True) -> str:
     return indent_str + s
 
 
-@define(auto_attribs=True, frozen=True)
-class Version:
-    major: int
-    minor: int | None
-
-    @classmethod
-    def from_opt_str(cls, vstr: str | None) -> Self | None:
-        if vstr is None:
-            return None
-        sp = vstr.split(".")
-        if len(sp) == 1:
-            return cls(int(sp[0]), None)
-        elif len(sp) == 2:
-            return cls(int(sp[0]), int(sp[1]))
-        else:
-            raise ValueError(f"can't parse version string: '{vstr}'")
-
-    def __str__(self) -> str:
-        if self.minor is None:
-            return f"{self.major}"
-        else:
-            return f"{self.major}.{self.minor}"
-
-
-@define(auto_attribs=True, frozen=True)
-class NestedField:
-    name: str
-    comment: str = field(converter=str.strip, repr=False)
-    version: Version | None = field(converter=Version.from_opt_str)
-
-    def __str__(self) -> str:
-        if self.version:
-            return "\n* ``{}`` :versionbadge:`clang-format {}`\n{}".format(
-                self.name,
-                self.version,
-                doxygen2rst(indent(self.comment, 2, indent_first_line=False)),
-            )
-        return "\n* ``{}`` {}".format(
-            self.name,
-            doxygen2rst(indent(self.comment, 2, indent_first_line=False)),
-        )
-
-
-@define(auto_attribs=True, frozen=True)
-class EnumValue:
-    name: str
-    comment: str = field(repr=False)
-    config: str
-
-    def __str__(self) -> str:
-        return "* ``{}`` (in configuration: ``{}``)\n{}".format(
-            self.name,
-            re.sub(".*_", "", self.config),
-            doxygen2rst(indent(self.comment, 2)),
-        )
-
-
-@define(auto_attribs=True, frozen=True)
-class Enum:
-    name: str
-    comment: str = field(converter=str.strip, repr=False)
-    values: list[EnumValue] = Factory(list)
-
-    def __str__(self) -> str:
-        return "\n".join(map(str, self.values))
-
-
-@define(auto_attribs=True, frozen=True)
-class NestedEnum:
-    name: str
-    type: str
-    comment: str = field(repr=False)
-    version: Version | None = field(converter=Version.from_opt_str)
-    values: list
-    args: argparse.Namespace = field(repr=False)
-
-    def __str__(self) -> str:
-        s = ""
-        if self.version:
-            s = "\n* ``{} {}`` :versionbadge:`clang-format {}`\n\n{}".format(
-                to_yaml_type(self.type, self.args),
-                self.name,
-                self.version,
-                doxygen2rst(indent(self.comment, 2)),
-            )
-        else:
-            s = "\n* ``{} {}``\n{}".format(
-                to_yaml_type(self.type, self.args),
-                self.name,
-                doxygen2rst(indent(self.comment, 2)),
-            )
-        s += indent("\nPossible values:\n\n", 2)
-        s += indent("\n".join(map(str, self.values)), 2)
-        return s
-
-
-@define(auto_attribs=True, frozen=True)
-class NestedStruct:
-    name: str
-    comment: str = field(converter=str.strip, repr=False)
-    values: list[NestedEnum | NestedField] = Factory(list)
-
-    def __str__(self) -> str:
-        return self.comment + "\n" + "\n".join(map(str, self.values))
-
-
-@define(auto_attribs=True)
 class Option:
-    name: str
-    type: str
-    comment: str = field(converter=str.strip, repr=False)
-    version: Version | None = field(converter=Version.from_opt_str)
-    args: argparse.Namespace = field(repr=False)
-    enum: Enum | None = field(init=False, default=None)
-    nested_struct: NestedStruct | None = field(init=False, default=None)
+    def __init__(self, name, opt_type, comment, version):
+        self.name = name
+        self.type = opt_type
+        self.comment = comment.strip()
+        self.enum = None
+        self.nested_struct = None
+        self.version = version
 
-    def __str__(self) -> str:
+    def __str__(self):
         s = ".. _{}:\n\n**{}** (``{}``) ".format(
             self.name,
             self.name,
-            to_yaml_type(self.type, self.args),
+            to_yaml_type(self.type),
         )
         if self.version:
             s += ":versionbadge:`clang-format %s` " % self.version
@@ -242,26 +129,106 @@ class Option:
         return s
 
 
-@define(auto_attribs=True)
+class NestedStruct:
+    def __init__(self, name, comment):
+        self.name = name
+        self.comment = comment.strip()
+        self.values = []
+
+    def __str__(self):
+        return self.comment + "\n" + "\n".join(map(str, self.values))
+
+
+class NestedField:
+    def __init__(self, name, comment, version):
+        self.name = name
+        self.comment = comment.strip()
+        self.version = version
+
+    def __str__(self):
+        if self.version:
+            return "\n* ``{}`` :versionbadge:`clang-format {}`\n{}".format(
+                self.name,
+                self.version,
+                doxygen2rst(indent(self.comment, 2, indent_first_line=False)),
+            )
+        return "\n* ``{}`` {}".format(
+            self.name,
+            doxygen2rst(indent(self.comment, 2, indent_first_line=False)),
+        )
+
+
+class Enum:
+    def __init__(self, name, comment):
+        self.name = name
+        self.comment = comment.strip()
+        self.values = []
+
+    def __str__(self):
+        return "\n".join(map(str, self.values))
+
+
+class NestedEnum:
+    def __init__(self, name, enumtype, comment, version, values):
+        self.name = name
+        self.comment = comment
+        self.values = values
+        self.type = enumtype
+        self.version = version
+
+    def __str__(self):
+        s = ""
+        if self.version:
+            s = "\n* ``{} {}`` :versionbadge:`clang-format {}`\n\n{}".format(
+                to_yaml_type(self.type),
+                self.name,
+                self.version,
+                doxygen2rst(indent(self.comment, 2)),
+            )
+        else:
+            s = "\n* ``{} {}``\n{}".format(
+                to_yaml_type(self.type),
+                self.name,
+                doxygen2rst(indent(self.comment, 2)),
+            )
+        s += indent("\nPossible values:\n\n", 2)
+        s += indent("\n".join(map(str, self.values)), 2)
+        return s
+
+
+class EnumValue:
+    def __init__(self, name, comment, config):
+        self.name = name
+        self.comment = comment
+        self.config = config
+
+    def __str__(self):
+        return "* ``{}`` (in configuration: ``{}``)\n{}".format(
+            self.name,
+            re.sub(".*_", "", self.config),
+            doxygen2rst(indent(self.comment, 2)),
+        )
+
+
 class OptionsReader:
-    header: TextIOWrapper
-    args: argparse.Namespace = field(repr=False)
-    in_code_block: bool = field(init=False, default=False)
-    code_indent: int = field(init=False, default=0)
-    lineno: int = field(init=False, default=0)
-    last_err_lineno: int = field(init=False, default=-1)
+    def __init__(self, header: TextIOWrapper):
+        self.header = header
+        self.in_code_block = False
+        self.code_indent = 0
+        self.lineno = 0
+        self.last_err_lineno = -1
 
-    def __file_path(self) -> str:
-        return os.path.relpath(self.header.name, str(self.args.clang_dir))
+    def __file_path(self):
+        return os.path.relpath(self.header.name)
 
-    def __print_line(self, line: str) -> None:
+    def __print_line(self, line: str):
         print(f"{self.lineno:>6} | {line}", file=sys.stderr)
 
-    def __warning(self, msg: str, line: str) -> None:
+    def __warning(self, msg: str, line: str):
         print(f"{self.__file_path()}:{self.lineno}: warning: {msg}:", file=sys.stderr)
         self.__print_line(line)
 
-    def __clean_comment_line(self, line: str) -> str:
+    def __clean_comment_line(self, line: str):
         match = re.match(r"^/// (?P<indent> +)?\\code(\{.(?P<lang>\w+)\})?$", line)
         if match:
             if self.in_code_block:
@@ -312,7 +279,7 @@ class OptionsReader:
             return ""
         return line[4:] + "\n"
 
-    def read_options(self) -> list[Option]:
+    def read_options(self):
         class State:
             (
                 BeforeStruct,
@@ -329,14 +296,14 @@ class OptionsReader:
 
         state = State.BeforeStruct
 
-        options: list[Option] = []
-        enums: dict[str, Enum] = {}
-        nested_structs: dict[str, NestedStruct] = {}
-        comment: str = ""
-        enum: Enum | None = None
-        nested_struct: NestedStruct | None = None
-        version: str | None = None
-        deprecated: bool = False
+        options = []
+        enums = {}
+        nested_structs = {}
+        comment = ""
+        enum = None
+        nested_struct = None
+        version = None
+        deprecated = False
 
         for line in self.header:
             self.lineno += 1
@@ -373,17 +340,14 @@ class OptionsReader:
                     if line.startswith(prefix):
                         line = line[len(prefix) :]
                     state = State.InStruct
-                    match = re.match(r"([<>:\w(,\s)]+)\s+(\w+);", line)
-                    if match is None:
-                        raise ValueError(f"bad RE on '{line}'")
-                    field_type, field_name = match.groups()
+                    field_type, field_name = re.match(r"([<>:\w(,\s)]+)\s+(\w+);", line).groups()
                     if deprecated:
                         field_type = "deprecated"
                         deprecated = False
 
                     if not version:
                         self.__warning(f"missing version for {field_name}", line)
-                    option = Option(str(field_name), str(field_type), comment, version, self.args)
+                    option = Option(str(field_name), str(field_type), comment, version)
                     options.append(option)
                     version = None
                 else:
@@ -394,8 +358,6 @@ class OptionsReader:
                     comment = self.__clean_comment_line(line)
                 elif line == "};":
                     state = State.InStruct
-                    if nested_struct is None:
-                        raise ValueError("nested_struct not initialized")
                     nested_structs[nested_struct.name] = nested_struct
             elif state == State.InNestedFieldComment:
                 if line.startswith(r"/// \version"):
@@ -410,14 +372,9 @@ class OptionsReader:
                     enum = Enum(name, comment)
                 else:
                     state = State.InNestedStruct
-                    match = re.match(r"([<>:\w(,\s)]+)\s+(\w+);", line)
-                    if match is None:
-                        raise ValueError(f"bad RE on '{line}'")
-                    field_type, field_name = match.groups()
+                    field_type, field_name = re.match(r"([<>:\w(,\s)]+)\s+(\w+);", line).groups()
                     # if not version:
-                    #     self.__warning(f"missing version for {field_name}", line)
-                    if nested_struct is None:
-                        raise ValueError("nested_struct not initialized")
+                    #    self.__warning(f"missing version for {field_name}", line)
                     if field_type in enums:
                         nested_struct.values.append(
                             NestedEnum(
@@ -426,7 +383,6 @@ class OptionsReader:
                                 comment,
                                 version,
                                 enums[field_type].values,
-                                self.args,
                             )
                         )
                     else:
@@ -440,8 +396,6 @@ class OptionsReader:
                     comment = self.__clean_comment_line(line)
                 elif line == "};":
                     state = State.InStruct
-                    if enum is None:
-                        raise ValueError("enum not initialized")
                     enums[enum.name] = enum
                 else:
                     # Enum member without documentation. Must be documented
@@ -453,8 +407,6 @@ class OptionsReader:
                     comment = self.__clean_comment_line(line)
                 elif line == "};":
                     state = State.InNestedStruct
-                    if enum is None:
-                        raise ValueError("enum not initialized")
                     enums[enum.name] = enum
                 else:
                     # Enum member without documentation. Must be
@@ -472,8 +424,6 @@ class OptionsReader:
                         val = val[:pos]
                     else:
                         config = val
-                    if enum is None:
-                        raise ValueError("enum not initialized")
                     enum.values.append(EnumValue(val, comment, config))
             elif state == State.InNestedEnumMemberComment:
                 if line.startswith("///"):
@@ -487,8 +437,6 @@ class OptionsReader:
                         val = val[:pos]
                     else:
                         config = val
-                    if enum is None:
-                        raise ValueError("enum not initialized")
                     enum.values.append(EnumValue(val, comment, config))
         if state != State.Finished:
             raise Exception("Not finished by the end of file")
@@ -514,34 +462,22 @@ class OptionsReader:
         return options
 
 
-def get_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-o", "--output", help="path of output file")
-    parser.add_argument("-c", "--clang-dir", type=Path, help="path of clang source root")
-    return parser
+p = argparse.ArgumentParser()
+p.add_argument("-o", "--output", help="path of output file")
+args = p.parse_args()
 
+with open(FORMAT_STYLE_FILE) as f:
+    opts = OptionsReader(f).read_options()
+with open(INCLUDE_STYLE_FILE) as f:
+    opts += OptionsReader(f).read_options()
 
-def real_main(args: argparse.Namespace) -> None:
-    with open(PLURALS_FILE(args)) as f:
-        f.seek(0)
-        global plurals
-        plurals = set(f.read().splitlines())
-    with open(FORMAT_STYLE_FILE(args)) as f:
-        opts = OptionsReader(f, args).read_options()
-    with open(INCLUDE_STYLE_FILE(args)) as f:
-        opts += OptionsReader(f, args).read_options()
+opts = sorted(opts, key=lambda x: x.name)
+options_text = "\n\n".join(map(str, opts))
 
-    opts = sorted(opts, key=lambda x: x.name)
-    rich.print(opts)
-    options_text = "\n\n".join(map(str, opts))
+with open(DOC_FILE, encoding="utf-8") as f:
+    contents = f.read()
 
-    with open(args.output, "w") as f:
-        f.write(options_text)
+contents = substitute(contents, "FORMAT_STYLE_OPTIONS", options_text)
 
-
-def main() -> None:
-    real_main(get_arg_parser().parse_args())
-
-
-if __name__ == "__main__":
-    main()
+with open(args.output if args.output else DOC_FILE, "w", newline="", encoding="utf-8") as f:
+    f.write(contents)
