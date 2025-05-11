@@ -512,25 +512,31 @@ class OptionsReader:
                         print(
                             f"type(field_type) in enums nested_struct: {type(field_type)} field_type: {field_type}"
                         )
-                        nested_struct.values.append(
-                            NestedEnum(
-                                field_name,
-                                field_type,
-                                comment,
-                                version,
-                                enums[field_type].values,
-                                self.args,
-                            )
+                        new_nested_enum = NestedEnum(
+                            field_name,
+                            field_type,
+                            comment,
+                            version,
+                            enums[field_type].values,
+                            self.args,
                         )
+                        if new_nested_enum in nested_struct.values:
+                            raise ValueError(
+                                f"new_nested_enum in nested_struct.values: {new_nested_enum}"
+                            )
+                        nested_struct.values.append(new_nested_enum)
+                        new_nested_enum = None
                     else:
                         print(
                             f"type(field_type) in enums nested_struct 2: {type(field_type)} field_type: {field_type} type(field_name): {type(field_name)} field_name: {field_name}"
                         )
-                        nested_struct.values.append(
-                            NestedField(
-                                field_type.cxx_name + " " + field_name, field_type, comment, version
+                        new_nested_field = NestedField(field_name, field_type, comment, version)
+                        if new_nested_field in nested_struct.values:
+                            raise ValueError(
+                                f"new_nested_field in nested_struct.values: {new_nested_field}"
                             )
-                        )
+                        nested_struct.values.append(new_nested_field)
+                        new_nested_field = None
                     version = None
                     field_type = None
             elif state == State.InEnum:
