@@ -11,7 +11,10 @@
 #include <levenshtein.hpp>
 #include <boost/asio.hpp>
 #include <boost/filesystem.hpp>
-#include <boost/process/v2.hpp>
+#include <boost/process/v2/environment.hpp>
+#include <boost/process/v2/execute.hpp>
+#include <boost/process/v2/process.hpp>
+#include <boost/process/v2/stdio.hpp>
 #include <fmt/chrono.h>
 #include <fmt/color.h>
 #include <fmt/format.h>

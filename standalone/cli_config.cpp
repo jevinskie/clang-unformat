@@ -7,7 +7,10 @@
 
 #include "cli_config.hpp"
 #include <boost/asio.hpp>
-#include <boost/process/v2.hpp>
+#include <boost/process/v2/environment.hpp>
+#include <boost/process/v2/execute.hpp>
+#include <boost/process/v2/process.hpp>
+#include <boost/process/v2/stdio.hpp>
 #include <boost/program_options.hpp>
 #include <fmt/color.h>
 #include <fmt/format.h>
