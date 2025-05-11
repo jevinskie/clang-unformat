@@ -9,18 +9,30 @@ import os
 import re
 import sys
 from io import TextIOWrapper
+from pathlib import Path
 
-CLANG_DIR = os.path.join(os.path.dirname(__file__), "../..")
-FORMAT_STYLE_FILE = os.path.join(CLANG_DIR, "include/clang/Format/Format.h")
-INCLUDE_STYLE_FILE = os.path.join(CLANG_DIR, "include/clang/Tooling/Inclusions/IncludeStyle.h")
-DOC_FILE = os.path.join(CLANG_DIR, "docs/ClangFormatStyleOptions.rst")
 
-PLURALS_FILE = os.path.join(os.path.dirname(__file__), "plurals.txt")
+def CLANG_DIR(a) -> Path:
+    return a.clang_dir
+
+
+def FORMAT_STYLE_FILE(a) -> Path:
+    return CLANG_DIR(a) / "include/clang/Format/Format.h"
+
+
+def INCLUDE_STYLE_FILE(a) -> Path:
+    return CLANG_DIR(a) / "include/clang/Tooling/Inclusions/IncludeStyle.h"
+
+
+def DOC_FILE(a) -> Path:
+    return CLANG_DIR(a) / "docs/ClangFormatStyleOptions.rst"
+
+
+def PLURALS_FILE(a) -> Path:
+    return CLANG_DIR(a) / "docs/tools/plurals.txt"
+
 
 plurals: set[str] = set()
-with open(PLURALS_FILE) as f:
-    f.seek(0)
-    plurals = set(f.read().splitlines())
 
 
 def substitute(text, tag, contents):
@@ -29,18 +41,18 @@ def substitute(text, tag, contents):
     return re.sub(pattern, "%s", text, flags=re.S) % replacement
 
 
-def register_plural(singular: str, plural: str):
+def register_plural(singular: str, plural: str, args: argparse.Namespace):
     if plural not in plurals:
         if not hasattr(register_plural, "generated_new_plural"):
             print(
                 "Plural generation: you can use "
-                f"`git checkout -- {os.path.relpath(PLURALS_FILE)}` "
+                f"`git checkout -- {os.path.relpath(PLURALS_FILE(args))}` "
                 "to reemit warnings or `git add` to include new plurals\n"
             )
         register_plural.generated_new_plural = True
 
         plurals.add(plural)
-        with open(PLURALS_FILE, "a") as f:
+        with open(PLURALS_FILE(args), "a") as f:
             f.write(plural + "\n")
         cf = inspect.currentframe()
         lineno = ""
@@ -53,21 +65,21 @@ def register_plural(singular: str, plural: str):
     return plural
 
 
-def pluralize(word: str):
+def pluralize(word: str, args: argparse.Namespace):
     lword = word.lower()
     if len(lword) >= 2 and lword[-1] == "y" and lword[-2] not in "aeiou":
-        return register_plural(word, word[:-1] + "ies")
+        return register_plural(word, word[:-1] + "ies", args)
     elif lword.endswith(("s", "sh", "ch", "x", "z")):
-        return register_plural(word, word[:-1] + "es")
+        return register_plural(word, word[:-1] + "es", args)
     elif lword.endswith("fe"):
-        return register_plural(word, word[:-2] + "ves")
+        return register_plural(word, word[:-2] + "ves", args)
     elif lword.endswith("f") and not lword.endswith("ff"):
-        return register_plural(word, word[:-1] + "ves")
+        return register_plural(word, word[:-1] + "ves", args)
     else:
-        return register_plural(word, word + "s")
+        return register_plural(word, word + "s", args)
 
 
-def to_yaml_type(typestr: str):
+def to_yaml_type(typestr: str, args: argparse.Namespace):
     if typestr == "bool":
         return "Boolean"
     elif typestr == "int":
@@ -79,11 +91,11 @@ def to_yaml_type(typestr: str):
 
     match = re.match(r"std::vector<(.*)>$", typestr)
     if match:
-        return "List of " + pluralize(to_yaml_type(match.group(1)))
+        return "List of " + pluralize(to_yaml_type(match.group(1), args), args)
 
     match = re.match(r"std::optional<(.*)>$", typestr)
     if match:
-        return to_yaml_type(match.group(1))
+        return to_yaml_type(match.group(1), args)
 
     return typestr
 
@@ -104,19 +116,20 @@ def indent(text, columns, indent_first_line=True):
 
 
 class Option:
-    def __init__(self, name, opt_type, comment, version):
+    def __init__(self, name, opt_type, comment, version, args):
         self.name = name
         self.type = opt_type
         self.comment = comment.strip()
         self.enum = None
         self.nested_struct = None
         self.version = version
+        self.args = args
 
     def __str__(self):
         s = ".. _{}:\n\n**{}** (``{}``) ".format(
             self.name,
             self.name,
-            to_yaml_type(self.type),
+            to_yaml_type(self.type, self.args),
         )
         if self.version:
             s += ":versionbadge:`clang-format %s` " % self.version
@@ -169,25 +182,26 @@ class Enum:
 
 
 class NestedEnum:
-    def __init__(self, name, enumtype, comment, version, values):
+    def __init__(self, name, enumtype, comment, version, values, args):
         self.name = name
         self.comment = comment
         self.values = values
         self.type = enumtype
         self.version = version
+        self.args = args
 
     def __str__(self):
         s = ""
         if self.version:
             s = "\n* ``{} {}`` :versionbadge:`clang-format {}`\n\n{}".format(
-                to_yaml_type(self.type),
+                to_yaml_type(self.type, self.args),
                 self.name,
                 self.version,
                 doxygen2rst(indent(self.comment, 2)),
             )
         else:
             s = "\n* ``{} {}``\n{}".format(
-                to_yaml_type(self.type),
+                to_yaml_type(self.type, self.args),
                 self.name,
                 doxygen2rst(indent(self.comment, 2)),
             )
@@ -211,12 +225,13 @@ class EnumValue:
 
 
 class OptionsReader:
-    def __init__(self, header: TextIOWrapper):
+    def __init__(self, header: TextIOWrapper, args: argparse.Namespace):
         self.header = header
         self.in_code_block = False
         self.code_indent = 0
         self.lineno = 0
         self.last_err_lineno = -1
+        self.args = args
 
     def __file_path(self):
         return os.path.relpath(self.header.name)
@@ -347,7 +362,7 @@ class OptionsReader:
 
                     if not version:
                         self.__warning(f"missing version for {field_name}", line)
-                    option = Option(str(field_name), str(field_type), comment, version)
+                    option = Option(str(field_name), str(field_type), comment, version, self.args)
                     options.append(option)
                     version = None
                 else:
@@ -383,6 +398,7 @@ class OptionsReader:
                                 comment,
                                 version,
                                 enums[field_type].values,
+                                self.args,
                             )
                         )
                     else:
@@ -462,22 +478,40 @@ class OptionsReader:
         return options
 
 
-p = argparse.ArgumentParser()
-p.add_argument("-o", "--output", help="path of output file")
-args = p.parse_args()
+def get_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-o", "--output", help="path of output file")
+    parser.add_argument("-c", "--clang-dir", type=Path, help="path of clang source root")
+    return parser
 
-with open(FORMAT_STYLE_FILE) as f:
-    opts = OptionsReader(f).read_options()
-with open(INCLUDE_STYLE_FILE) as f:
-    opts += OptionsReader(f).read_options()
 
-opts = sorted(opts, key=lambda x: x.name)
-options_text = "\n\n".join(map(str, opts))
+def real_main(args: argparse.Namespace) -> None:
+    with open(PLURALS_FILE(args)) as f:
+        f.seek(0)
+        global plurals
+        plurals = set(f.read().splitlines())
+    with open(FORMAT_STYLE_FILE(args)) as f:
+        opts = OptionsReader(f, args).read_options()
+    with open(INCLUDE_STYLE_FILE(args)) as f:
+        opts += OptionsReader(f, args).read_options()
 
-with open(DOC_FILE, encoding="utf-8") as f:
-    contents = f.read()
+    opts = sorted(opts, key=lambda x: x.name)
+    options_text = "\n\n".join(map(str, opts))
 
-contents = substitute(contents, "FORMAT_STYLE_OPTIONS", options_text)
+    with open(DOC_FILE(args), encoding="utf-8") as f:
+        contents = f.read()
 
-with open(args.output if args.output else DOC_FILE, "w", newline="", encoding="utf-8") as f:
-    f.write(contents)
+    contents = substitute(contents, "FORMAT_STYLE_OPTIONS", options_text)
+
+    with open(
+        args.output if args.output else DOC_FILE(args), "w", newline="", encoding="utf-8"
+    ) as f:
+        f.write(contents)
+
+
+def main() -> None:
+    real_main(get_arg_parser().parse_args())
+
+
+if __name__ == "__main__":
+    main()
