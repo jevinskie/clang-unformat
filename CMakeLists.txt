@@ -17,18 +17,18 @@ include(FetchContent)
 find_package(Threads)
 
 # Boost
-# find_package(Boost 1.88.0 COMPONENTS asio config process program_options)
+# find_package(Boost 1.89.0 COMPONENTS asio config process program_options)
 set(Boost_FOUND OFF)
 if (NOT Boost_FOUND)
-    set(BOOST_VERSION 1.88.0)
-    message("Boost library not found or Version < 1.88.0 ; fetch and install Version ${BOOST_VERSION}")
+    set(BOOST_VERSION 1.89.0)
+    message("Boost library not found or Version < 1.89.0 ; fetch and install Version ${BOOST_VERSION}")
     set(BOOST_INCLUDE_LIBRARIES asio config filesystem optional process program_options)
     set(BOOST_ENABLE_CMAKE ON)
 
     FetchContent_Declare(
         Boost
         URL https://github.com/boostorg/boost/releases/download/boost-${BOOST_VERSION}/boost-${BOOST_VERSION}-cmake.tar.xz
-        URL_HASH SHA256=f48b48390380cfb94a629872346e3a81370dc498896f16019ade727ab72eb1ec
+        URL_HASH SHA256=67acec02d0d118b5de9eb441f5fb707b3a1cdd884be00ca24b9a73c995511f74
         DOWNLOAD_EXTRACT_TIMESTAMP true
         GIT_TAG boost-${BOOST_VERSION}
     )
@@ -39,12 +39,13 @@ endif()
 # find_package(fmt QUIET)
 set(fmt_FOUND OFF)
 if (NOT fmt_FOUND)
+    set(FMT_VERSION 12.0.0)
     option(FMT_DOC OFF)
     option(FMT_TEST OFF)
     option(FMT_INSTALL OFF)
     FetchContent_Declare(fmt
-        URL https://github.com/fmtlib/fmt/releases/download/11.2.0/fmt-11.2.0.zip
-        URL_HASH SHA256=203eb4e8aa0d746c62d8f903df58e0419e3751591bb53ff971096eaa0ebd4ec3
+        URL https://github.com/fmtlib/fmt/releases/download/${FMT_VERSION}/fmt-${FMT_VERSION}.zip
+        URL_HASH SHA256=1c32293203449792bf8e94c7f6699c643887e826f2d66a80869b4f279fb07d25
         DOWNLOAD_EXTRACT_TIMESTAMP true
     )
     FetchContent_MakeAvailable(fmt)
